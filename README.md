@@ -1,6 +1,7 @@
 # ML307 Series Cat.1 AT Modem
 
 This is a component for the ML307R / ML307A Cat.1 Module.
+This project is initially created for https://github.com/78/xiaozhi-esp32
 
 ## Features
 
