@@ -13,7 +13,7 @@ public:
     virtual void SetHeader(const std::string& key, const std::string& value) = 0;
 
     // 设置 HTTP 请求体
-    virtual void SetContent(const std::string&& content) = 0;
+    virtual void SetContent(const std::string& content) = 0;
 
     // 打开 HTTP 连接并发送请求
     virtual bool Open(const std::string& method, const std::string& url) = 0;

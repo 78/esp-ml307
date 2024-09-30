@@ -16,8 +16,8 @@ void EspHttp::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
 }
 
-void EspHttp::SetContent(const std::string&& content) {
-    content_ = std::move(content);
+void EspHttp::SetContent(const std::string& content) {
+    content_ = content;
 }
 
 bool EspHttp::Open(const std::string& method, const std::string& url) {

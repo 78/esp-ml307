@@ -84,8 +84,8 @@ void Ml307Http::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
 }
 
-void Ml307Http::SetContent(const std::string&& content) {
-    content_ = std::move(content);
+void Ml307Http::SetContent(const std::string& content) {
+    content_ = content;
 }
 
 void Ml307Http::ParseResponseHeaders(const std::string& headers) {

@@ -24,7 +24,7 @@ public:
     ~Ml307Http();
 
     void SetHeader(const std::string& key, const std::string& value) override;
-    void SetContent(const std::string&& content) override;
+    void SetContent(const std::string& content) override;
     bool Open(const std::string& method, const std::string& url) override;
     void Close() override;
 
