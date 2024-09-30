@@ -44,11 +44,14 @@ public:
 
     std::string EncodeHex(const std::string& data);
     std::string DecodeHex(const std::string& data);
+    void EncodeHexAppend(std::string& dest, const char* data, size_t length);
+    void DecodeHexAppend(std::string& dest, const char* data, size_t length);
 
     bool Command(const std::string command, int timeout_ms = DEFAULT_COMMAND_TIMEOUT);
     std::list<CommandResponseCallback>::iterator RegisterCommandResponseCallback(CommandResponseCallback callback);
     void UnregisterCommandResponseCallback(std::list<CommandResponseCallback>::iterator iterator);
 
+    void Reset();
     void ResetConnections();
     void SetDebug(bool debug);
     bool SetBaudRate(int new_baud_rate);
@@ -65,6 +68,7 @@ public:
 
 private:
     std::mutex mutex_;
+    std::mutex command_mutex_;
     bool debug_ = false;
     bool network_ready_ = false;
     std::string ip_address_;

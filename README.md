@@ -34,12 +34,9 @@ void TestHttp(Ml307AtModem& modem) {
     http.SetHeader("User-Agent", "Xiaozhi/1.0.0");
     http.Open("GET", "https://xiaozhi.me/");
     
-    // print response headers & body
-    ESP_LOGI(TAG, "Response headers: %zu", http.response_headers().size());
-    for (const auto& header : http.response_headers()) {
-        ESP_LOGI(TAG, "Header: %s: %s", header.first.c_str(), header.second.c_str());
-    }
-    ESP_LOGI(TAG, "Response body: %zu bytes %s", http.body().size(), http.body().c_str());
+    // print body length & body
+    ESP_LOGI(TAG, "Response body: %zu bytes", http.GetBodyLength());
+    ESP_LOGI(TAG, "Response body: %s", http.GetBody().c_str());
     http.Close();
 }
 

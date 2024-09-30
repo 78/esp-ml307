@@ -33,7 +33,7 @@ Ml307SslTransport::Ml307SslTransport(Ml307AtModem& modem, int tcp_id) : modem_(m
             if (arguments[1].int_value == tcp_id_) {
                 if (arguments[0].string_value == "rtcp") {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    rx_buffer_.append(modem_.DecodeHex(arguments[3].string_value));
+                    modem_.DecodeHexAppend(rx_buffer_, arguments[3].string_value.c_str(), arguments[3].string_value.size());
                     xEventGroupSetBits(event_group_handle_, ML307_SSL_TRANSPORT_RECEIVE);
                 } else if (arguments[0].string_value == "disconn") {
                     connected_ = false;
@@ -125,17 +125,37 @@ void Ml307SslTransport::Disconnect() {
 }
 
 int Ml307SslTransport::Send(const char* data, size_t length) {
-    std::string command = "AT+MIPSEND=" + std::to_string(tcp_id_) + "," + std::to_string(length) + "," + modem_.EncodeHex(std::string(data, length));
-    if (!modem_.Command(command)) {
-        ESP_LOGE(TAG, "Failed to send data");
-        return -1;
-    }
+    const size_t MAX_PACKET_SIZE = 1460 / 2;
+    size_t total_sent = 0;
 
-    auto bits = xEventGroupWaitBits(event_group_handle_, ML307_SSL_TRANSPORT_SEND_COMPLETE, pdTRUE, pdFALSE, pdMS_TO_TICKS(SSL_CONNECT_TIMEOUT_MS));
-    if (bits & ML307_SSL_TRANSPORT_SEND_COMPLETE) {
-        return length;
+    // 在循环外预先分配command
+    std::string command;
+    command.reserve(32 + MAX_PACKET_SIZE * 2);  // 预分配最大可能需要的空间
+
+    while (total_sent < length) {
+        size_t chunk_size = std::min(length - total_sent, MAX_PACKET_SIZE);
+        
+        // 重置command并构建新的命令
+        command.clear();
+        command = "AT+MIPSEND=" + std::to_string(tcp_id_) + "," + std::to_string(chunk_size) + ",";
+        
+        // 直接在command字符串上进行十六进制编码
+        modem_.EncodeHexAppend(command, data + total_sent, chunk_size);
+        
+        if (!modem_.Command(command)) {
+            ESP_LOGE(TAG, "发送数据块失败");
+            return -1;
+        }
+
+        auto bits = xEventGroupWaitBits(event_group_handle_, ML307_SSL_TRANSPORT_SEND_COMPLETE, pdTRUE, pdFALSE, pdMS_TO_TICKS(SSL_CONNECT_TIMEOUT_MS));
+        if (!(bits & ML307_SSL_TRANSPORT_SEND_COMPLETE)) {
+            ESP_LOGE(TAG, "未收到发送确认");
+            return -1;
+        }
+
+        total_sent += chunk_size;
     }
-    return -1;
+    return length;
 }
 
 int Ml307SslTransport::Receive(char* buffer, size_t bufferSize) {

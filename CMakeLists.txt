@@ -6,6 +6,7 @@ idf_component_register(
         "Ml307Mqtt.cc"
         "WebSocket.cc"
         "TlsTransport.cc"
+        "EspHttp.cc"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS
@@ -14,4 +15,5 @@ idf_component_register(
         "esp_driver_gpio"
         "esp_driver_uart"
         "esp-tls"
+        "esp_http_client"
 )

@@ -89,6 +89,7 @@ bool Ml307AtModem::SetBaudRate(int new_baud_rate) {
 
 void Ml307AtModem::WaitForNetworkReady() {
     while (!network_ready_) {
+        ESP_LOGI(TAG, "Waiting for network ready...");
         Command("AT+MIPCALL?");
         xEventGroupWaitBits(event_group_handle_, AT_EVENT_NETWORK_READY, pdTRUE, pdFALSE, pdMS_TO_TICKS(1000));
     }
@@ -144,6 +145,7 @@ void Ml307AtModem::UnregisterCommandResponseCallback(std::list<CommandResponseCa
 }
 
 bool Ml307AtModem::Command(const std::string command, int timeout_ms) {
+    std::lock_guard<std::mutex> lock(command_mutex_);
     if (debug_) {
         ESP_LOGI(TAG, ">> %.64s", command.c_str());
     }
@@ -157,12 +159,14 @@ bool Ml307AtModem::Command(const std::string command, int timeout_ms) {
         }
     }
 
-    auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
-    if (bits & AT_EVENT_COMMAND_DONE) {
-        return true;
-    } else if (bits & AT_EVENT_COMMAND_ERROR) {
-        ESP_LOGE(TAG, "command error: %s", command.c_str());
-        return false;
+    if (timeout_ms > 0) {
+        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+        if (bits & AT_EVENT_COMMAND_DONE) {
+            return true;
+        } else if (bits & AT_EVENT_COMMAND_ERROR) {
+            ESP_LOGE(TAG, "command error: %s", command.c_str());
+            return false;
+        }
     }
     return false;
 }
@@ -266,6 +270,10 @@ bool Ml307AtModem::ParseResponse() {
         rx_buffer_.erase(0, 4);
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
         return true;
+    } else if (rx_buffer_.size() >= 1 && rx_buffer_[0] == '>') {
+        rx_buffer_.erase(0, 1);
+        xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
+        return true;
     } else if (rx_buffer_.size() >= 7 && rx_buffer_[0] == 'E' && rx_buffer_[1] == 'R' && rx_buffer_[2] == 'R' && rx_buffer_[3] == 'O' && rx_buffer_[4] == 'R' && rx_buffer_[5] == '\r' && rx_buffer_[6] == '\n') {
         rx_buffer_.erase(0, 7);
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
@@ -306,20 +314,45 @@ void Ml307AtModem::NotifyCommandResponse(const std::string& command, const std::
     }
 }
 
-std::string Ml307AtModem::EncodeHex(const std::string& data) {
-    std::stringstream ss;
-    for (unsigned char c : data) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)c;
+static const char hex_chars[] = "0123456789ABCDEF";
+// 辅助函数，将单个十六进制字符转换为对应的数值
+inline uint8_t CharToHex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return 0;  // 对于无效输入，返回0
+}
+
+void Ml307AtModem::EncodeHexAppend(std::string& dest, const char* data, size_t length) {
+    dest.reserve(dest.size() + length * 2);  // 预分配空间
+    for (size_t i = 0; i < length; i++) {
+        dest.push_back(hex_chars[(data[i] & 0xF0) >> 4]);
+        dest.push_back(hex_chars[data[i] & 0x0F]);
     }
-    return ss.str();
+}
+
+void Ml307AtModem::DecodeHexAppend(std::string& dest, const char* data, size_t length) {
+    dest.reserve(dest.size() + length / 2);  // 预分配空间
+    for (size_t i = 0; i < length; i += 2) {
+        char byte = (CharToHex(data[i]) << 4) | CharToHex(data[i + 1]);
+        dest.push_back(byte);
+    }
+}
+
+std::string Ml307AtModem::EncodeHex(const std::string& data) {
+    std::string encoded;
+    EncodeHexAppend(encoded, data.c_str(), data.size());
+    return encoded;
 }
 
 std::string Ml307AtModem::DecodeHex(const std::string& data) {
-    std::stringstream ss;
-    for (size_t i = 0; i < data.size(); i += 2) {
-        ss << static_cast<char>(std::stoi(data.substr(i, 2), nullptr, 16));
-    }
-    return ss.str();
+    std::string decoded;
+    DecodeHexAppend(decoded, data.c_str(), data.size());
+    return decoded;
+}
+
+void Ml307AtModem::Reset() {
+    Command("AT+MREBOOT=0");
 }
 
 void Ml307AtModem::ResetConnections() {
