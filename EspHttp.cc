@@ -46,20 +46,20 @@ bool EspHttp::Open(const std::string& method, const std::string& url) {
     esp_err_t err = esp_http_client_open(client_, content_.length());
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to perform HTTP request: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client_);
+        Close();
         return false;
     }
 
     auto written = esp_http_client_write(client_, content_.data(), content_.length());
     if (written < 0) {
         ESP_LOGE(TAG, "Failed to write request body: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client_);
+        Close();
         return false;
     }
     content_length_ = esp_http_client_fetch_headers(client_);
     if (content_length_ <= 0) {
         ESP_LOGE(TAG, "Failed to fetch headers");
-        esp_http_client_cleanup(client_);
+        Close();
         return false;
     }
     return true;
