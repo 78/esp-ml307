@@ -51,6 +51,7 @@ public:
     std::list<CommandResponseCallback>::iterator RegisterCommandResponseCallback(CommandResponseCallback callback);
     void UnregisterCommandResponseCallback(std::list<CommandResponseCallback>::iterator iterator);
 
+    void OnMaterialReady(std::function<void()> callback);
     void Reset();
     void ResetConnections();
     void SetDebug(bool debug);
@@ -96,6 +97,7 @@ private:
     void NotifyCommandResponse(const std::string& command, const std::vector<AtArgumentValue>& arguments);
 
     std::list<CommandResponseCallback> on_data_received_;
+    std::function<void()> on_material_ready_;
 };
 
 

@@ -229,13 +229,14 @@ bool Ml307AtModem::ParseResponse() {
 
     // Parse "+CME ERROR: 123,456,789"
     if (rx_buffer_[0] == '+') {
+        std::string command, values;
         auto pos = rx_buffer_.find(": ");
-        if (pos == std::string::npos) {
-            return false;
+        if (pos == std::string::npos || pos > end_pos) {
+            command = rx_buffer_.substr(1, end_pos - 1);
+        } else {
+            command = rx_buffer_.substr(1, pos - 1);
+            values = rx_buffer_.substr(pos + 2, end_pos - pos - 2);
         }
-        auto command = rx_buffer_.substr(1, pos - 1);
-
-        std::string values = rx_buffer_.substr(pos + 2, end_pos - pos - 2);
         rx_buffer_.erase(0, end_pos + 2);
         if (debug_) {
             ESP_LOGI(TAG, "<< %s: %.64s", command.c_str(), values.c_str());
@@ -286,6 +287,10 @@ bool Ml307AtModem::ParseResponse() {
     return false;
 }
 
+void Ml307AtModem::OnMaterialReady(std::function<void()> callback) {
+    on_material_ready_ = callback;
+}
+
 void Ml307AtModem::NotifyCommandResponse(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
     if (command == "CME ERROR") {
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
@@ -297,15 +302,17 @@ void Ml307AtModem::NotifyCommandResponse(const std::string& command, const std::
             network_ready_ = true;
             xEventGroupSetBits(event_group_handle_, AT_EVENT_NETWORK_READY);
         }
-    }
-    if (command == "ICCID" && arguments.size() >= 1) {
+    } else if (command == "ICCID" && arguments.size() >= 1) {
         iccid_ = arguments[0].string_value;
-    }
-    if (command == "COPS" && arguments.size() >= 4) {
+    } else if (command == "COPS" && arguments.size() >= 4) {
         carrier_name_ = arguments[2].string_value;
-    }
-    if (command == "CSQ" && arguments.size() >= 1) {
+    } else if (command == "CSQ" && arguments.size() >= 1) {
         csq_ = arguments[0].int_value;
+    } else if (command == "MATREADY") {
+        network_ready_ = false;
+        if (on_material_ready_) {
+            on_material_ready_();
+        }
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
