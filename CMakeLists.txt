@@ -6,6 +6,7 @@ idf_component_register(
         "Ml307Mqtt.cc"
         "WebSocket.cc"
         "TlsTransport.cc"
+        "TcpTransport.cc"
         "EspHttp.cc"
     INCLUDE_DIRS
         "include"

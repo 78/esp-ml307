@@ -17,8 +17,8 @@ public:
     void SetReceiveBufferSize(size_t size);
     bool IsConnected() const;
     bool Connect(const char* uri);
-    void Send(const std::string& data);
-    void Send(const void* data, size_t len, bool binary = false, bool fin = true);
+    bool Send(const std::string& data);
+    bool Send(const void* data, size_t len, bool binary = false, bool fin = true);
     void Ping();
     void Close();
 
@@ -40,8 +40,8 @@ private:
     std::function<void()> on_disconnected_;
 
     void ReceiveTask();
-    void SendAllRaw(const void* data, size_t len);
-    void SendControlFrame(uint8_t opcode, const void* data, size_t len);
+    bool SendAllRaw(const void* data, size_t len);
+    bool SendControlFrame(uint8_t opcode, const void* data, size_t len);
 };
 
 #endif // WEBSOCKET_H

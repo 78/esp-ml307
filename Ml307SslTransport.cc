@@ -65,6 +65,9 @@ Ml307SslTransport::~Ml307SslTransport() {
 bool Ml307SslTransport::Connect(const char* host, int port) {
     char command[64];
 
+    // Clear bits
+    xEventGroupClearBits(event_group_handle_, ML307_SSL_TRANSPORT_CONNECTED | ML307_SSL_TRANSPORT_DISCONNECTED | ML307_SSL_TRANSPORT_ERROR);
+
     // 检查这个 id 是否已经连接
     sprintf(command, "AT+MIPSTATE=%d", tcp_id_);
     modem_.Command(command);
@@ -120,6 +123,7 @@ void Ml307SslTransport::Disconnect() {
         return;
     }
     connected_ = false;
+    xEventGroupSetBits(event_group_handle_, ML307_SSL_TRANSPORT_DISCONNECTED);
     std::string command = "AT+MIPCLOSE=" + std::to_string(tcp_id_);
     modem_.Command(command);
 }
@@ -144,6 +148,8 @@ int Ml307SslTransport::Send(const char* data, size_t length) {
         
         if (!modem_.Command(command)) {
             ESP_LOGE(TAG, "发送数据块失败");
+            connected_ = false;
+            xEventGroupSetBits(event_group_handle_, ML307_SSL_TRANSPORT_DISCONNECTED);
             return -1;
         }
 

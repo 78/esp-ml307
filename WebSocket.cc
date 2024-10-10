@@ -137,7 +137,7 @@ bool WebSocket::Connect(const char* uri) {
     }
     request += "\r\n";
 
-    if (!transport_->Send(request.c_str(), request.length())) {
+    if (!SendAllRaw(request.c_str(), request.length())) {
         ESP_LOGE(TAG, "Failed to send WebSocket handshake request");
         return false;
     }
@@ -171,14 +171,14 @@ bool WebSocket::Connect(const char* uri) {
 }
 
 
-void WebSocket::Send(const std::string& data) {
-    Send(data.data(), data.size(), false);
+bool WebSocket::Send(const std::string& data) {
+    return Send(data.data(), data.size(), false);
 }
 
-void WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
+bool WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
     if (len > 65535) {
         ESP_LOGE(TAG, "Data too large, maximum supported size is 65535 bytes");
-        return;
+        return false;
     }
 
     std::vector<uint8_t> frame;
@@ -216,11 +216,11 @@ void WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
         frame.push_back(payload[i] ^ mask[i % 4]);
     }
 
-    // 发送帧
-    SendAllRaw(frame.data(), frame.size());
-
     // 更新continuation_状态
     continuation_ = !fin;
+
+    // 发送帧
+    return SendAllRaw(frame.data(), frame.size());
 }
 
 void WebSocket::Ping() {
@@ -366,22 +366,23 @@ void WebSocket::ReceiveTask() {
     delete[] buffer;
 }
 
-void WebSocket::SendAllRaw(const void* data, size_t len) {
+bool WebSocket::SendAllRaw(const void* data, size_t len) {
     auto ptr = (char*)data;
     while (transport_->connected() && len > 0) {
         int sent = transport_->Send(ptr, len);
         if (sent < 0) {
-            break;
+            return false;
         }
         ptr += sent;
         len -= sent;
     }
+    return true;
 }
 
-void WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
+bool WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
     if (len > 125) {
         ESP_LOGE(TAG, "控制帧有效载荷过大");
-        return;
+        return false;
     }
 
     std::vector<uint8_t> frame;
@@ -407,5 +408,5 @@ void WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
     }
 
     // 发送帧
-    SendAllRaw(frame.data(), frame.size());
+    return SendAllRaw(frame.data(), frame.size());
 }
