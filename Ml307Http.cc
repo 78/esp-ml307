@@ -76,6 +76,9 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
 }
 
 Ml307Http::~Ml307Http() {
+    if (connected_) {
+        Close();
+    }
     modem_.UnregisterCommandResponseCallback(command_callback_it_);
     vEventGroupDelete(event_group_handle_);
 }
@@ -135,6 +138,7 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
         ESP_LOGE(TAG, "等待HTTP连接创建超时");
         return false;
     }
+    connected_ = true;
     ESP_LOGI(TAG, "HTTP 连接已创建，ID: %d", http_id_);
 
     if (protocol_ == "https") {
@@ -227,10 +231,14 @@ const std::string& Ml307Http::GetBody() {
 }
 
 void Ml307Http::Close() {
+    if (!connected_) {
+        return;
+    }
     char command[32];
     sprintf(command, "AT+MHTTPDEL=%d", http_id_);
     modem_.Command(command);
 
+    connected_ = false;
     eof_ = true;
     cv_.notify_one();
     ESP_LOGI(TAG, "HTTP连接已关闭，ID: %d", http_id_);

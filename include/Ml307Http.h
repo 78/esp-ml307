@@ -57,6 +57,7 @@ private:
     size_t body_offset_ = 0;
     size_t content_length_ = 0;
     bool eof_ = false;
+    bool connected_ = false;
 
     void ParseResponseHeaders(const std::string& headers);
     std::string ErrorCodeToString(int error_code);
