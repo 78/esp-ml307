@@ -56,7 +56,7 @@ public:
     void ResetConnections();
     void SetDebug(bool debug);
     bool SetBaudRate(int new_baud_rate);
-    void WaitForNetworkReady();
+    int WaitForNetworkReady();
 
     std::string GetImei();
     std::string GetIccid();
@@ -66,7 +66,8 @@ public:
 
     const std::string& ip_address() const { return ip_address_; }
     bool network_ready() const { return network_ready_; }
-
+    int registration_state() const { return registration_state_; }
+    int pin_ready() const { return pin_ready_; }
 private:
     std::mutex mutex_;
     std::mutex command_mutex_;
@@ -76,6 +77,8 @@ private:
     std::string iccid_;
     std::string carrier_name_;
     int csq_ = -1;
+    int registration_state_ = 0;
+    int pin_ready_ = 0;
 
     std::string rx_buffer_;
     size_t rx_buffer_size_;

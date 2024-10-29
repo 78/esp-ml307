@@ -87,12 +87,22 @@ bool Ml307AtModem::SetBaudRate(int new_baud_rate) {
     return false;
 }
 
-void Ml307AtModem::WaitForNetworkReady() {
+int Ml307AtModem::WaitForNetworkReady() {
+    ESP_LOGI(TAG, "Waiting for network ready...");
+    Command("AT+CEREG=1", 1000);
     while (!network_ready_) {
-        ESP_LOGI(TAG, "Waiting for network ready...");
+        if (pin_ready_ == 2) {
+            ESP_LOGE(TAG, "PIN is not ready");
+            return -1;
+        }
+        if (registration_state_ == 3) {
+            ESP_LOGI(TAG, "Registration denied");
+            return -2;
+        }
         Command("AT+MIPCALL?");
         xEventGroupWaitBits(event_group_handle_, AT_EVENT_NETWORK_READY, pdTRUE, pdFALSE, pdMS_TO_TICKS(1000));
     }
+    return 0;
 }
 
 std::string Ml307AtModem::GetImei() {
@@ -149,6 +159,7 @@ bool Ml307AtModem::Command(const std::string command, int timeout_ms) {
     if (debug_) {
         ESP_LOGI(TAG, ">> %.64s", command.c_str());
     }
+    response_.clear();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         last_command_ = command + "\r\n";
@@ -226,6 +237,9 @@ bool Ml307AtModem::ParseResponse() {
         rx_buffer_.erase(0, 2);
         return true;
     }
+    if (debug_) {
+        ESP_LOGI(TAG, "<< %.64s", rx_buffer_.substr(0, end_pos).c_str());
+    }
 
     // Parse "+CME ERROR: 123,456,789"
     if (rx_buffer_[0] == '+') {
@@ -238,9 +252,6 @@ bool Ml307AtModem::ParseResponse() {
             values = rx_buffer_.substr(pos + 2, end_pos - pos - 2);
         }
         rx_buffer_.erase(0, end_pos + 2);
-        if (debug_) {
-            ESP_LOGI(TAG, "<< %s: %.64s", command.c_str(), values.c_str());
-        }
 
         // Parse "string", int, int, ... into AtArgumentValue
         std::vector<AtArgumentValue> arguments;
@@ -312,6 +323,18 @@ void Ml307AtModem::NotifyCommandResponse(const std::string& command, const std::
         network_ready_ = false;
         if (on_material_ready_) {
             on_material_ready_();
+        }
+    } else if (command == "CEREG" && arguments.size() >= 1) {
+        if (arguments.size() == 1) {
+            registration_state_ = arguments[0].int_value;
+        } else {
+            registration_state_ = arguments[1].int_value;
+        }
+    } else if (command == "CPIN" && arguments.size() >= 1) {
+        if (arguments[0].string_value == "READY") {
+            pin_ready_ = 1;
+        } else {
+            pin_ready_ = 2;
         }
     }
 
