@@ -1,12 +1,12 @@
 #ifndef ML307_SSL_TRANSPORT_H
 #define ML307_SSL_TRANSPORT_H
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/event_groups.h"
-#include "Transport.h"
-#include "Ml307AtModem.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/event_groups.h>
+#include "transport.h"
+#include "ml307_at_modem.h"
 
 #include <mutex>
 #include <string>

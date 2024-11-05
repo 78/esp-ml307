@@ -1,8 +1,8 @@
 #ifndef ESP_HTTP_H
 #define ESP_HTTP_H
 
-#include "Http.h"
-#include "esp_http_client.h"
+#include "http.h"
+#include <esp_http_client.h>
 
 #include <string>
 #include <map>

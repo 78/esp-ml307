@@ -1,13 +1,13 @@
 idf_component_register(
     SRCS
-        "Ml307AtModem.cc"
-        "Ml307SslTransport.cc"
-        "Ml307Http.cc"
-        "Ml307Mqtt.cc"
-        "WebSocket.cc"
-        "TlsTransport.cc"
-        "TcpTransport.cc"
-        "EspHttp.cc"
+        "ml307_at_modem.cc"
+        "ml307_ssl_transport.cc"
+        "ml307_http.cc"
+        "ml307_mqtt.cc"
+        "web_socket.cc"
+        "tls_transport.cc"
+        "tcp_transport.cc"
+        "esp_http.cc"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS

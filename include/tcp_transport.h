@@ -1,7 +1,7 @@
 #ifndef _TCP_TRANSPORT_H_
 #define _TCP_TRANSPORT_H_
 
-#include "Transport.h"
+#include "transport.h"
 
 class TcpTransport : public Transport {
 public:

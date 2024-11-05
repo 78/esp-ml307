@@ -1,8 +1,8 @@
 #ifndef _TLS_TRANSPORT_H_
 #define _TLS_TRANSPORT_H_
 
-#include "Transport.h"
-#include "esp_tls.h"
+#include "transport.h"
+#include <esp_tls.h>
 
 class TlsTransport : public Transport {
 public:

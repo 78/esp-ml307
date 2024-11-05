@@ -7,12 +7,12 @@
 #include <list>
 #include <functional>
 #include <mutex>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/event_groups.h"
-#include "driver/gpio.h"
-#include "driver/uart.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/event_groups.h>
+#include <driver/gpio.h>
+#include <driver/uart.h>
 
 #define AT_EVENT_DATA_AVAILABLE BIT1
 #define AT_EVENT_COMMAND_DONE BIT2

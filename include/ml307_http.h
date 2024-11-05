@@ -1,10 +1,10 @@
 #ifndef ML307_HTTP_TRANSPORT_H
 #define ML307_HTTP_TRANSPORT_H
 
-#include "Ml307AtModem.h"
-#include "Http.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
+#include "ml307_at_modem.h"
+#include "http.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
 
 #include <map>
 #include <string>

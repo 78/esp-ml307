@@ -1,6 +1,6 @@
-#include "Ml307AtModem.h"
-#include "esp_log.h"
-#include "esp_err.h"
+#include "ml307_at_modem.h"
+#include <esp_log.h>
+#include <esp_err.h>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -16,15 +16,12 @@ Ml307AtModem::Ml307AtModem(int tx_pin, int rx_pin, size_t rx_buffer_size)
     : rx_buffer_size_(rx_buffer_size), uart_num_(DEFAULT_UART_NUM), tx_pin_(tx_pin), rx_pin_(rx_pin), baud_rate_(DEFAULT_BAUD_RATE) {
     event_group_handle_ = xEventGroupCreate();
 
-    uart_config_t uart_config = {
-        .baud_rate = baud_rate_,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .rx_flow_ctrl_thresh = 0,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
+    uart_config_t uart_config = {};
+    uart_config.baud_rate = baud_rate_;
+    uart_config.data_bits = UART_DATA_8_BITS;
+    uart_config.parity = UART_PARITY_DISABLE;
+    uart_config.stop_bits = UART_STOP_BITS_1;
+    uart_config.source_clk = UART_SCLK_DEFAULT;
     
     ESP_ERROR_CHECK(uart_driver_install(uart_num_, rx_buffer_size_ * 2, 0, 100, &event_queue_handle_, 0));
     ESP_ERROR_CHECK(uart_param_config(uart_num_, &uart_config));
