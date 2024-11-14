@@ -4,10 +4,13 @@ idf_component_register(
         "ml307_ssl_transport.cc"
         "ml307_http.cc"
         "ml307_mqtt.cc"
+        "ml307_udp.cc"
         "web_socket.cc"
         "tls_transport.cc"
         "tcp_transport.cc"
         "esp_http.cc"
+        "esp_mqtt.cc"
+        "esp_udp.cc"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS
@@ -17,4 +20,5 @@ idf_component_register(
         "esp_driver_uart"
         "esp-tls"
         "esp_http_client"
+        "mqtt"
 )

@@ -31,7 +31,7 @@ Ml307AtModem::Ml307AtModem(int tx_pin, int rx_pin, size_t rx_buffer_size)
         auto ml307_at_modem = (Ml307AtModem*)arg;
         ml307_at_modem->EventTask();
         vTaskDelete(NULL);
-    }, "uart_at_modem_event", 4096, this, 5, &event_task_handle_);
+    }, "uart_at_modem_event", 2048, this, 5, &event_task_handle_);
 
     xTaskCreate([](void* arg) {
         auto ml307_at_modem = (Ml307AtModem*)arg;
@@ -236,6 +236,10 @@ bool Ml307AtModem::ParseResponse() {
     }
     if (debug_) {
         ESP_LOGI(TAG, "<< %.64s", rx_buffer_.substr(0, end_pos).c_str());
+        // print last 64 bytes before end_pos if available
+        // if (end_pos > 64) {
+        //     ESP_LOGI(TAG, "<< LAST: %.64s", rx_buffer_.c_str() + end_pos - 64);
+        // }
     }
 
     // Parse "+CME ERROR: 123,456,789"

@@ -11,8 +11,17 @@ Ml307Mqtt::Ml307Mqtt(Ml307AtModem& modem, int mqtt_id) : modem_(modem), mqtt_id_
             if (arguments[1].int_value == mqtt_id_) {
                 auto type = arguments[0].string_value;
                 if (type == "conn") {
-                    connected_ = arguments[2].int_value == 0;
-                    xEventGroupSetBits(event_group_handle_, connected_ ? MQTT_CONNECTED_EVENT : MQTT_DISCONNECTED_EVENT);
+                    if (arguments[2].int_value == 0) {
+                        xEventGroupSetBits(event_group_handle_, MQTT_CONNECTED_EVENT);
+                    } else {
+                        if (connected_) {
+                            connected_ = false;
+                            if (on_disconnected_callback_) {
+                                on_disconnected_callback_();
+                            }
+                        }
+                        xEventGroupSetBits(event_group_handle_, MQTT_DISCONNECTED_EVENT);
+                    }
                     ESP_LOGI(TAG, "MQTT connection state: %s", ErrorToString(arguments[2].int_value).c_str());
                 } else if (type == "suback") {
                 } else if (type == "publish" && arguments.size() >= 7) {
@@ -44,10 +53,6 @@ Ml307Mqtt::~Ml307Mqtt() {
     vEventGroupDelete(event_group_handle_);
 }
 
-void Ml307Mqtt::OnMessage(std::function<void(const std::string& topic, const std::string& payload)> callback) {
-    on_message_callback_ = callback;
-}
-
 bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
     broker_address_ = broker_address;
     broker_port_ = broker_port;
@@ -55,16 +60,9 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
     username_ = username;
     password_ = password;
 
-    // 检查这个 id 是否已经连接
-    modem_.Command(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_));
-    auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_INITIALIZED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
-    if (!(bits & MQTT_INITIALIZED_EVENT)) {
-        ESP_LOGE(TAG, "Failed to initialize MQTT connection");
-        return false;
-    }
-
-    // 断开之前的连接
-    if (connected_) {
+    EventBits_t bits;
+    if (IsConnected()) {
+        // 断开之前的连接
         Disconnect();
         bits = xEventGroupWaitBits(event_group_handle_, MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
         if (!(bits & MQTT_DISCONNECTED_EVENT)) {
@@ -78,6 +76,18 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
             ESP_LOGE(TAG, "Failed to set MQTT to use SSL");
             return false;
         }
+    }
+
+    // Set clean session
+    if (!modem_.Command(std::string("AT+MQTTCFG=\"clean\",") + std::to_string(mqtt_id_) + ",1")) {
+        ESP_LOGE(TAG, "Failed to set MQTT clean session");
+        return false;
+    }
+
+    // Set keep alive
+    if (!modem_.Command(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
+        ESP_LOGE(TAG, "Failed to set MQTT keep alive");
+        return false;
     }
 
     // Set HEX encoding
@@ -100,7 +110,22 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         return false;
     }
 
+    connected_ = true;
+    if (on_connected_callback_) {
+        on_connected_callback_();
+    }
     return true;
+}
+
+bool Ml307Mqtt::IsConnected() {
+    // 检查这个 id 是否已经连接
+    modem_.Command(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_));
+    auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_INITIALIZED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
+    if (!(bits & MQTT_INITIALIZED_EVENT)) {
+        ESP_LOGE(TAG, "Failed to initialize MQTT connection");
+        return false;
+    }
+    return connected_;
 }
 
 void Ml307Mqtt::Disconnect() {
@@ -110,19 +135,21 @@ void Ml307Mqtt::Disconnect() {
     modem_.Command(std::string("AT+MQTTDISC=") + std::to_string(mqtt_id_));
 }
 
-bool Ml307Mqtt::Publish(const std::string topic, const std::string payload) {
+bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int qos) {
     if (!connected_) {
         return false;
     }
-    std::string command = "AT+MQTTPUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",0,0,0," + std::to_string(payload.size()) + "," + modem_.EncodeHex(payload);
+    std::string command = "AT+MQTTPUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",";
+    command += std::to_string(qos) + ",0,0,";
+    command += std::to_string(payload.size()) + "," + modem_.EncodeHex(payload);
     return modem_.Command(command);
 }
 
-bool Ml307Mqtt::Subscribe(const std::string topic) {
+bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {
     if (!connected_) {
         return false;
     }
-    std::string command = "AT+MQTTSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",0";
+    std::string command = "AT+MQTTSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\"," + std::to_string(qos);
     return modem_.Command(command);
 }
 
