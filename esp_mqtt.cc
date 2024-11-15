@@ -13,6 +13,10 @@ EspMqtt::~EspMqtt() {
 }
 
 bool EspMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
+    if (mqtt_client_handle_ != nullptr) {
+        Disconnect();
+    }
+
     esp_mqtt_client_config_t mqtt_config = {};
     mqtt_config.broker.address.hostname = broker_address.c_str();
     mqtt_config.broker.address.port = broker_port;
@@ -33,7 +37,7 @@ bool EspMqtt::Connect(const std::string broker_address, int broker_port, const s
     }, this);
     esp_mqtt_client_start(mqtt_client_handle_);
 
-    auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT,
+    auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT | MQTT_ERROR_EVENT,
         pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
     connected_ = (bits & MQTT_CONNECTED_EVENT) != 0;
     return connected_;
@@ -70,6 +74,7 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
     case MQTT_EVENT_SUBSCRIBED:
         break;
     case MQTT_EVENT_ERROR:
+        xEventGroupSetBits(event_group_handle_, MQTT_ERROR_EVENT);
         ESP_LOGI(TAG, "MQTT error occurred: %s", esp_err_to_name(event->error_handle->esp_tls_last_esp_err));
         break;
     default:
@@ -83,7 +88,7 @@ void EspMqtt::Disconnect() {
     esp_mqtt_client_destroy(mqtt_client_handle_);
     mqtt_client_handle_ = nullptr;
     connected_ = false;
-    xEventGroupClearBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT);
+    xEventGroupClearBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT | MQTT_ERROR_EVENT);
 }
 
 bool EspMqtt::Publish(const std::string topic, const std::string payload, int qos) {

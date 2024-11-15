@@ -15,6 +15,7 @@
 #define MQTT_INITIALIZED_EVENT BIT0
 #define MQTT_CONNECTED_EVENT BIT1
 #define MQTT_DISCONNECTED_EVENT BIT2
+#define MQTT_ERROR_EVENT BIT3
 
 class EspMqtt : public Mqtt {
 public:
