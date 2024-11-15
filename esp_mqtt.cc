@@ -69,6 +69,9 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
         break;
     case MQTT_EVENT_SUBSCRIBED:
         break;
+    case MQTT_EVENT_ERROR:
+        ESP_LOGI(TAG, "MQTT error occurred: %s", esp_err_to_name(event->error_handle->esp_tls_last_esp_err));
+        break;
     default:
         ESP_LOGI(TAG, "Unhandled event id %ld", event_id);
         break;
