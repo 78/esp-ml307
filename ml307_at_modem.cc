@@ -37,7 +37,7 @@ Ml307AtModem::Ml307AtModem(int tx_pin, int rx_pin, size_t rx_buffer_size)
         auto ml307_at_modem = (Ml307AtModem*)arg;
         ml307_at_modem->ReceiveTask();
         vTaskDelete(NULL);
-    }, "uart_at_modem_receive", 4096, this, 5, &receive_task_handle_);
+    }, "uart_at_modem_receive", 4096 * 2, this, 5, &receive_task_handle_);
 }
 
 Ml307AtModem::~Ml307AtModem() {
