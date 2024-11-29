@@ -24,8 +24,7 @@ public:
     ~Ml307Http();
 
     void SetHeader(const std::string& key, const std::string& value) override;
-    void SetContent(const std::string& content) override;
-    bool Open(const std::string& method, const std::string& url) override;
+    bool Open(const std::string& method, const std::string& url, const std::string& content = "") override;
     void Close() override;
 
     int GetStatusCode() const override { return status_code_; }
@@ -46,7 +45,6 @@ private:
     std::string rx_buffer_;
     std::list<CommandResponseCallback>::iterator command_callback_it_;
     std::map<std::string, std::string> headers_;
-    std::string content_;
     std::string url_;
     std::string method_;
     std::string protocol_;

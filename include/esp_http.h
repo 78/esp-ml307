@@ -13,8 +13,7 @@ public:
     virtual ~EspHttp();
 
     void SetHeader(const std::string& key, const std::string& value) override;
-    void SetContent(const std::string& content) override;
-    bool Open(const std::string& method, const std::string& url) override;
+    bool Open(const std::string& method, const std::string& url, const std::string& content = "") override;
     void Close() override;
 
     int GetStatusCode() const override;
@@ -26,7 +25,6 @@ public:
 private:
     esp_http_client_handle_t client_;
     std::map<std::string, std::string> headers_;
-    std::string content_;
     std::string response_body_;
     int status_code_;
     int64_t content_length_;

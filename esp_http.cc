@@ -16,11 +16,7 @@ void EspHttp::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
 }
 
-void EspHttp::SetContent(const std::string& content) {
-    content_ = content;
-}
-
-bool EspHttp::Open(const std::string& method, const std::string& url) {
+bool EspHttp::Open(const std::string& method, const std::string& url, const std::string& content) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.crt_bundle_attach = esp_crt_bundle_attach;
@@ -43,14 +39,14 @@ bool EspHttp::Open(const std::string& method, const std::string& url) {
         esp_http_client_set_header(client_, header.first.c_str(), header.second.c_str());
     }
 
-    esp_err_t err = esp_http_client_open(client_, content_.length());
+    esp_err_t err = esp_http_client_open(client_, content.length());
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to perform HTTP request: %s", esp_err_to_name(err));
         Close();
         return false;
     }
 
-    auto written = esp_http_client_write(client_, content_.data(), content_.length());
+    auto written = esp_http_client_write(client_, content.data(), content.length());
     if (written < 0) {
         ESP_LOGE(TAG, "Failed to write request body: %s", esp_err_to_name(err));
         Close();

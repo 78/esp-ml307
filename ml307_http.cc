@@ -87,10 +87,6 @@ void Ml307Http::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
 }
 
-void Ml307Http::SetContent(const std::string& content) {
-    content_ = content;
-}
-
 void Ml307Http::ParseResponseHeaders(const std::string& headers) {
     std::istringstream iss(headers);
     std::string line;
@@ -103,7 +99,7 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
     }
 }
 
-bool Ml307Http::Open(const std::string& method, const std::string& url) {
+bool Ml307Http::Open(const std::string& method, const std::string& url, const std::string& content) {
     method_ = method;
     url_ = url;
     // 解析URL
@@ -161,10 +157,10 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
         modem_.Command(command);
     }
 
-    if (!content_.empty() && method_ == "POST") {
-        sprintf(command, "AT+MHTTPCONTENT=%d,0,%zu", http_id_, content_.size());
+    if (!content.empty() && method_ == "POST") {
+        sprintf(command, "AT+MHTTPCONTENT=%d,0,%zu", http_id_, content.size());
         modem_.Command(command);
-        modem_.Command(content_);
+        modem_.Command(content);
     }
 
     // Set HEX encoding ON

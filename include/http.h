@@ -12,11 +12,8 @@ public:
     // 设置 HTTP 请求头
     virtual void SetHeader(const std::string& key, const std::string& value) = 0;
 
-    // 设置 HTTP 请求体
-    virtual void SetContent(const std::string& content) = 0;
-
     // 打开 HTTP 连接并发送请求
-    virtual bool Open(const std::string& method, const std::string& url) = 0;
+    virtual bool Open(const std::string& method, const std::string& url, const std::string& content = "") = 0;
 
     // 关闭 HTTP 连接
     virtual void Close() = 0;
