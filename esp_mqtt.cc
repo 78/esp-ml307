@@ -9,6 +9,10 @@ EspMqtt::EspMqtt() {
 }
 
 EspMqtt::~EspMqtt() {
+    if (event_group_handle_ != nullptr) {
+        Disconnect();
+    }
+
     vEventGroupDelete(event_group_handle_);
 }
 
