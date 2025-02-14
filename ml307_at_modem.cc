@@ -292,7 +292,7 @@ bool Ml307AtModem::ParseResponse() {
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
         return true;
     } else {
-        response_ = rx_buffer_.substr(0, end_pos).c_str();
+        response_ = rx_buffer_.substr(0, end_pos);
         rx_buffer_.erase(0, end_pos + 2);
         return true;
     }
