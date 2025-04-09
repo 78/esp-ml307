@@ -147,8 +147,8 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
     modem_.Command(command);
 
     // Flow control to 1024 bytes per 100ms
-    sprintf(command, "AT+MHTTPCFG=\"fragment\",%d,1024,100", http_id_);
-    modem_.Command(command);
+    // sprintf(command, "AT+MHTTPCFG=\"fragment\",%d,1024,100", http_id_);
+    // modem_.Command(command);
 
     // Set headers
     for (const auto& header : headers_) {
