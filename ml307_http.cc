@@ -58,7 +58,7 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
     }
     
     // 使用条件变量等待数据
-    auto timeout = std::chrono::milliseconds(HTTP_CONNECT_TIMEOUT_MS);
+    auto timeout = std::chrono::milliseconds(timeout_ms_);
     bool received = cv_.wait_for(lock, timeout, [this] { 
         return !body_.empty() || eof_; 
     });
@@ -85,6 +85,10 @@ Ml307Http::~Ml307Http() {
 
 void Ml307Http::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
+}
+
+void Ml307Http::SetTimeout(int timeout_ms) {
+    timeout_ms_ = timeout_ms;
 }
 
 void Ml307Http::ParseResponseHeaders(const std::string& headers) {
@@ -129,7 +133,7 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
         return false;
     }
 
-    auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(HTTP_CONNECT_TIMEOUT_MS));
+    auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
     if (!(bits & ML307_HTTP_EVENT_INITIALIZED)) {
         ESP_LOGE(TAG, "等待HTTP连接创建超时");
         return false;
@@ -148,6 +152,10 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
 
     // Flow control to 1024 bytes per 100ms
     // sprintf(command, "AT+MHTTPCFG=\"fragment\",%d,1024,100", http_id_);
+    // modem_.Command(command);
+
+    // Set timeout (seconds): connect timeout, response timeout, input timeout
+    // sprintf(command, "AT+MHTTPCFG=\"timeout\",%d,%d,%d,%d", http_id_, timeout_ms_ / 1000, timeout_ms_ / 1000, timeout_ms_ / 1000);
     // modem_.Command(command);
 
     // Set headers
@@ -181,7 +189,7 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
     modem_.Command(std::string(command) + modem_.EncodeHex(path_));
 
     // Wait for headers
-    bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(HTTP_CONNECT_TIMEOUT_MS));
+    bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
     if (bits & ML307_HTTP_EVENT_ERROR) {
         ESP_LOGE(TAG, "HTTP请求错误: %s", ErrorCodeToString(error_code_).c_str());
         return false;
@@ -213,7 +221,7 @@ size_t Ml307Http::GetBodyLength() const {
 const std::string& Ml307Http::GetBody() {
     std::unique_lock<std::mutex> lock(mutex_);
     
-    auto timeout = std::chrono::milliseconds(HTTP_CONNECT_TIMEOUT_MS);
+    auto timeout = std::chrono::milliseconds(timeout_ms_);
     bool received = cv_.wait_for(lock, timeout, [this] { 
         return eof_; 
     });

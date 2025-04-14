@@ -21,6 +21,7 @@ public:
     size_t GetBodyLength() const override;
     const std::string& GetBody() override;
     int Read(char* buffer, size_t buffer_size) override;
+    void SetTimeout(int timeout_ms) override;
 
 private:
     esp_http_client_handle_t client_;
@@ -28,6 +29,7 @@ private:
     std::string response_body_;
     int status_code_;
     int64_t content_length_;
+    int timeout_ms_ = 30000;
 
     static esp_err_t HttpEventHandler(esp_http_client_event_t *evt);
 };

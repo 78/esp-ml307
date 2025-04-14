@@ -32,6 +32,9 @@ public:
 
     // 读取 HTTP 响应数据
     virtual int Read(char* buffer, size_t buffer_size) = 0;
+
+    // Set timeout
+    virtual void SetTimeout(int timeout_ms) = 0;
 };
 
 #endif // HTTP_H

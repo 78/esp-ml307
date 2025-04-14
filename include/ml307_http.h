@@ -12,8 +12,6 @@
 #include <mutex>
 #include <condition_variable>
 
-#define HTTP_CONNECT_TIMEOUT_MS 30000
-
 #define ML307_HTTP_EVENT_INITIALIZED (1 << 0)
 #define ML307_HTTP_EVENT_ERROR (1 << 2)
 #define ML307_HTTP_EVENT_HEADERS_RECEIVED (1 << 3)
@@ -32,6 +30,7 @@ public:
     size_t GetBodyLength() const override;
     const std::string& GetBody() override;
     int Read(char* buffer, size_t buffer_size) override;
+    void SetTimeout(int timeout_ms) override;
 
 private:
     Ml307AtModem& modem_;
@@ -42,6 +41,7 @@ private:
     int http_id_ = -1;
     int status_code_ = -1;
     int error_code_ = -1;
+    int timeout_ms_ = 30000;
     std::string rx_buffer_;
     std::list<CommandResponseCallback>::iterator command_callback_it_;
     std::map<std::string, std::string> headers_;

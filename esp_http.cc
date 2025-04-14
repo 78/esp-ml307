@@ -16,10 +16,15 @@ void EspHttp::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
 }
 
+void EspHttp::SetTimeout(int timeout_ms) {
+    timeout_ms_ = timeout_ms;
+}
+
 bool EspHttp::Open(const std::string& method, const std::string& url, const std::string& content) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.crt_bundle_attach = esp_crt_bundle_attach;
+    config.timeout_ms = timeout_ms_;
 
     ESP_LOGI(TAG, "Opening HTTP connection to %s", url.c_str());
 
@@ -58,6 +63,7 @@ bool EspHttp::Open(const std::string& method, const std::string& url, const std:
         Close();
         return false;
     }
+    status_code_ = esp_http_client_get_status_code(client_);
     return true;
 }
 
