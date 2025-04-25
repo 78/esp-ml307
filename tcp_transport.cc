@@ -5,6 +5,10 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <string.h>
+#include <errno.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #define TAG "TcpTransport"
 
 TcpTransport::TcpTransport() : fd_(-1) {}
@@ -55,12 +59,22 @@ void TcpTransport::Disconnect() {
 }
 
 int TcpTransport::Send(const char* data, size_t length) {
-    int ret = send(fd_, data, length, 0);
-    if (ret <= 0) {
+    int ret;
+    while (true) {
+        ret = send(fd_, data, length, 0);
+        if (ret > 0) {
+            return ret;
+        }
+
+        if (errno == EINPROGRESS) {
+            vTaskDelay(1);
+            continue;
+        }
+
         connected_ = false;
-        ESP_LOGE(TAG, "Send failed: %d", ret);
+        ESP_LOGE(TAG, "Send failed: %d, %s", ret, strerror(errno));
+        return ret;
     }
-    return ret;
 }
 
 int TcpTransport::Receive(char* buffer, size_t bufferSize) {
