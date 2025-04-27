@@ -1,4 +1,5 @@
-#include "tcp_transport.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <esp_log.h>
 #include <unistd.h>
 #include <cstring>
@@ -7,8 +8,9 @@
 #include <netdb.h>
 #include <string.h>
 #include <errno.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+
+#include "tcp_transport.h"
+
 #define TAG "TcpTransport"
 
 TcpTransport::TcpTransport() : fd_(-1) {}
