@@ -89,7 +89,8 @@ bool Ml307SslTransport::Connect(const char* host, int port) {
         return false;
     }
 
-    sprintf(command, "AT+MIPCFG=\"ssl\",%d,1,0", tcp_id_);
+    // 只对 443 端口使用 SSL
+    sprintf(command, "AT+MIPCFG=\"ssl\",%d,%d,0", tcp_id_, port == 443 ? 1 : 0);
     if (!modem_.Command(command)) {
         ESP_LOGE(TAG, "Failed to set TCP SSL configuration");
         return false;
