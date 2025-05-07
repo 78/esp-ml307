@@ -39,6 +39,27 @@ typedef std::function<void(const std::string& command, const std::vector<AtArgum
 
 class Ml307AtModem {
 public:
+    struct CeregState {
+        int stat = -1;              // <stat>
+        std::string tac;        // <tac>
+        std::string ci;    // <ci>
+        int AcT = -1;        // <AcT>
+        int cause_type = -1;         // <cause_type>
+        int reject_cause = -1;       // <reject_cause>
+
+        std::string ToString() const {
+            std::string json = "{";
+            json += "\"stat\":" + std::to_string(stat);
+            if (!tac.empty()) json += ",\"tac\":\"" + tac + "\"";
+            if (!ci.empty()) json += ",\"ci\":\"" + ci + "\"";
+            if (AcT >= 0) json += ",\"AcT\":" + std::to_string(AcT);
+            if (cause_type >= 0) json += ",\"cause_type\":" + std::to_string(cause_type);
+            if (reject_cause >= 0) json += ",\"reject_cause\":" + std::to_string(reject_cause);
+            json += "}";
+            return json;
+        }
+    };
+
     Ml307AtModem(int tx_pin = GPIO_NUM_17, int rx_pin = GPIO_NUM_18, size_t rx_buffer_size = 2048);
     ~Ml307AtModem();
 
@@ -61,13 +82,14 @@ public:
     std::string GetImei();
     std::string GetIccid();
     std::string GetModuleName();
+    CeregState GetRegistrationState();
     std::string GetCarrierName();
     int GetCsq();
 
     const std::string& ip_address() const { return ip_address_; }
     bool network_ready() const { return network_ready_; }
-    int registration_state() const { return registration_state_; }
     int pin_ready() const { return pin_ready_; }
+
 private:
     std::mutex mutex_;
     std::mutex command_mutex_;
@@ -76,8 +98,8 @@ private:
     std::string ip_address_;
     std::string iccid_;
     std::string carrier_name_;
+
     int csq_ = -1;
-    int registration_state_ = 0;
     int pin_ready_ = 0;
 
     std::string rx_buffer_;
@@ -92,6 +114,8 @@ private:
     EventGroupHandle_t event_group_handle_ = nullptr;
     std::string last_command_;
     std::string response_;
+
+    CeregState cereg_state_;
 
     void EventTask();
     void ReceiveTask();

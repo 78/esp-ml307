@@ -86,13 +86,13 @@ bool Ml307AtModem::SetBaudRate(int new_baud_rate) {
 
 int Ml307AtModem::WaitForNetworkReady() {
     ESP_LOGI(TAG, "Waiting for network ready...");
-    Command("AT+CEREG=1", 1000);
+    Command("AT+CEREG=3", 1000);
     while (!network_ready_) {
         if (pin_ready_ == 2) {
             ESP_LOGE(TAG, "PIN is not ready");
             return -1;
         }
-        if (registration_state_ == 3) {
+        if (cereg_state_.stat == 3) {
             ESP_LOGI(TAG, "Registration denied");
             return -2;
         }
@@ -128,6 +128,14 @@ std::string Ml307AtModem::GetCarrierName() {
         return carrier_name_;
     }
     return "";
+}
+
+Ml307AtModem::CeregState Ml307AtModem::GetRegistrationState() {
+    if (Command("AT+CEREG?")) {
+        return cereg_state_;
+    }
+    // 返回一个表示未知状态的对象
+    return CeregState{};
 }
 
 int Ml307AtModem::GetCsq() {
@@ -326,10 +334,26 @@ void Ml307AtModem::NotifyCommandResponse(const std::string& command, const std::
             on_material_ready_();
         }
     } else if (command == "CEREG" && arguments.size() >= 1) {
+        cereg_state_ = CeregState{};
         if (arguments.size() == 1) {
-            registration_state_ = arguments[0].int_value;
-        } else {
-            registration_state_ = arguments[1].int_value;
+            cereg_state_.stat = 0;
+        } else if (arguments.size() >= 4) {
+            int state_index = arguments[1].type == AtArgumentValue::Type::Int ? 1 : 0;
+            cereg_state_.stat = arguments[state_index].int_value;
+            cereg_state_.tac = arguments[state_index + 1].string_value;
+            cereg_state_.ci = arguments[state_index + 2].string_value;
+            if (arguments.size() >= 5) {
+                cereg_state_.AcT = arguments[state_index + 3].int_value;
+            }
+            if (arguments.size() >= 6) {
+                cereg_state_.cause_type = arguments[state_index + 4].int_value;
+            }
+            if (arguments.size() >= 7) {
+                cereg_state_.reject_cause = arguments[state_index + 5].int_value;
+            }
+        }
+        if (debug_) {
+            ESP_LOGI(TAG, "CEREG: %s", cereg_state_.ToString().c_str());
         }
     } else if (command == "CPIN" && arguments.size() >= 1) {
         if (arguments[0].string_value == "READY") {
