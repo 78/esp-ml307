@@ -20,5 +20,6 @@ idf_component_register(
         "esp_driver_uart"
         "esp-tls"
         "esp_http_client"
+        "pthread"
         "mqtt"
 )

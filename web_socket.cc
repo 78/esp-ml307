@@ -2,6 +2,7 @@
 #include <esp_log.h>
 #include <cstdlib>
 #include <cstring>
+#include <esp_pthread.h>
 
 static const char *TAG = "WebSocket";
 
@@ -163,7 +164,13 @@ bool WebSocket::Connect(const char* uri) {
         on_connected_();
     }
 
-    // Start a task to receive data
+    // Start a task to receive data with stack size 4096
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.thread_name = "websocket";
+    cfg.stack_size = 4096;
+    cfg.prio = 5;
+    esp_pthread_set_cfg(&cfg);
+
     receive_thread_ = std::thread([this]() {
         ReceiveTask();
     });
