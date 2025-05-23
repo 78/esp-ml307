@@ -139,10 +139,14 @@ bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int 
     if (!connected_) {
         return false;
     }
+    // If payload size is larger than 64KB, a CME ERROR 601 will be returned.
     std::string command = "AT+MQTTPUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",";
     command += std::to_string(qos) + ",0,0,";
-    command += std::to_string(payload.size()) + ",\"" + payload + "\"";
-    return modem_.Command(command);
+    command += std::to_string(payload.size());
+    if (!modem_.Command(command)) {
+        return false;
+    }
+    return modem_.Command(payload);
 }
 
 bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {

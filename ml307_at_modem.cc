@@ -162,7 +162,7 @@ void Ml307AtModem::UnregisterCommandResponseCallback(std::list<CommandResponseCa
 bool Ml307AtModem::Command(const std::string command, int timeout_ms) {
     std::lock_guard<std::mutex> lock(command_mutex_);
     if (debug_) {
-        ESP_LOGI(TAG, ">> %.64s", command.c_str());
+        ESP_LOGI(TAG, ">> %.64s (%u bytes)", command.c_str(), command.length());
     }
     response_.clear();
     {
@@ -243,7 +243,7 @@ bool Ml307AtModem::ParseResponse() {
         return true;
     }
     if (debug_) {
-        ESP_LOGI(TAG, "<< %.64s", rx_buffer_.substr(0, end_pos).c_str());
+        ESP_LOGI(TAG, "<< %.64s (%u bytes)", rx_buffer_.substr(0, end_pos).c_str(), end_pos);
         // print last 64 bytes before end_pos if available
         // if (end_pos > 64) {
         //     ESP_LOGI(TAG, "<< LAST: %.64s", rx_buffer_.c_str() + end_pos - 64);
