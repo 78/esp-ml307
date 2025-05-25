@@ -14,6 +14,8 @@ Ml307Http::Ml307Http(Ml307AtModem& modem) : modem_(modem) {
             if (arguments[1].int_value == http_id_) {
                 auto& type = arguments[0].string_value;
                 if (type == "header") {
+                    eof_ = false;
+                    body_offset_ = 0;
                     body_.clear();
                     status_code_ = arguments[2].int_value;
                     ParseResponseHeaders(modem_.DecodeHex(arguments[4].string_value));
@@ -38,6 +40,10 @@ Ml307Http::Ml307Http(Ml307AtModem& modem) : modem_(modem) {
                 } else if (type == "err") {
                     error_code_ = arguments[2].int_value;
                     xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_ERROR);
+                } else if (type == "ind") {
+                    xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_IND);
+                } else {
+                    ESP_LOGE(TAG, "Unknown HTTP event: %s", type.c_str());
                 }
             }
         } else if (command == "MHTTPCREATE") {
@@ -75,6 +81,14 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
     return bytes_to_read;
 }
 
+int Ml307Http::Write(const char* buffer, size_t buffer_size) {
+    char command[256];
+    sprintf(command, "AT+MHTTPCONTENT=%d,%d,%zu", http_id_, chunked_ ? (buffer_size == 0 ? 0 : 1) : 0, buffer_size);
+    modem_.Command(command);
+    modem_.Command(std::string(buffer, buffer_size));
+    return buffer_size;
+}
+
 Ml307Http::~Ml307Http() {
     if (connected_) {
         Close();
@@ -85,6 +99,10 @@ Ml307Http::~Ml307Http() {
 
 void Ml307Http::SetHeader(const std::string& key, const std::string& value) {
     headers_[key] = value;
+}
+
+void Ml307Http::SetContent(std::string&& content) {
+    content_ = std::make_optional(std::move(content));
 }
 
 void Ml307Http::SetTimeout(int timeout_ms) {
@@ -103,7 +121,7 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
     }
 }
 
-bool Ml307Http::Open(const std::string& method, const std::string& url, const std::string& content) {
+bool Ml307Http::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
     // 解析URL
@@ -139,6 +157,7 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
         return false;
     }
     connected_ = true;
+    chunked_ = method_ == "POST" && !content_.has_value();
     ESP_LOGI(TAG, "HTTP 连接已创建，ID: %d", http_id_);
 
     if (protocol_ == "https") {
@@ -146,29 +165,32 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
         modem_.Command(command);
     }
 
+    if (chunked_) {
+        sprintf(command, "AT+MHTTPCFG=\"chunked\",%d,1", http_id_);
+        modem_.Command(command);
+    }
+
     // Set HEX encoding OFF
     sprintf(command, "AT+MHTTPCFG=\"encoding\",%d,0,0", http_id_);
     modem_.Command(command);
-
-    // Flow control to 1024 bytes per 100ms
-    // sprintf(command, "AT+MHTTPCFG=\"fragment\",%d,1024,100", http_id_);
-    // modem_.Command(command);
 
     // Set timeout (seconds): connect timeout, response timeout, input timeout
     // sprintf(command, "AT+MHTTPCFG=\"timeout\",%d,%d,%d,%d", http_id_, timeout_ms_ / 1000, timeout_ms_ / 1000, timeout_ms_ / 1000);
     // modem_.Command(command);
 
     // Set headers
-    for (const auto& header : headers_) {
-        auto line = header.first + ": " + header.second;
-        sprintf(command, "AT+MHTTPCFG=\"header\",%d,%s", http_id_, line.c_str());
+    for (auto it = headers_.begin(); it != headers_.end(); it++) {
+        auto line = it->first + ": " + it->second;
+        bool is_last = std::next(it) == headers_.end();
+        sprintf(command, "AT+MHTTPHEADER=%d,%d,%zu,\"%s\"", http_id_, is_last ? 0 : 1, line.size(), line.c_str());
         modem_.Command(command);
     }
 
-    if (!content.empty() && method_ == "POST") {
-        sprintf(command, "AT+MHTTPCONTENT=%d,0,%zu", http_id_, content.size());
+    if (method_ == "POST" && content_.has_value()) {
+        sprintf(command, "AT+MHTTPCONTENT=%d,0,%zu", http_id_, content_.value().size());
         modem_.Command(command);
-        modem_.Command(content);
+        modem_.Command(content_.value());
+        content_ = std::nullopt;
     }
 
     // Set HEX encoding ON
@@ -186,10 +208,24 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
         }
     }
     sprintf(command, "AT+MHTTPREQUEST=%d,%d,0,", http_id_, method_value);
-    modem_.Command(std::string(command) + modem_.EncodeHex(path_));
+    if (!modem_.Command(std::string(command) + modem_.EncodeHex(path_))) {
+        ESP_LOGE(TAG, "发送HTTP请求失败");
+        return false;
+    }
 
+    if (chunked_) {
+        auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_IND, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
+        if (!(bits & ML307_HTTP_EVENT_IND)) {
+            ESP_LOGE(TAG, "等待HTTP IND超时");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Ml307Http::FetchHeaders() {
     // Wait for headers
-    bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
+    auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
     if (bits & ML307_HTTP_EVENT_ERROR) {
         ESP_LOGE(TAG, "HTTP请求错误: %s", ErrorCodeToString(error_code_).c_str());
         return false;
@@ -199,26 +235,34 @@ bool Ml307Http::Open(const std::string& method, const std::string& url, const st
         return false;
     }
 
-    if (status_code_ >= 400) {
-        ESP_LOGE(TAG, "HTTP请求失败，状态码: %d", status_code_);
-        return false;
-    }
-
     auto it = response_headers_.find("Content-Length");
     if (it != response_headers_.end()) {
         content_length_ = std::stoul(it->second);
     }
-    eof_ = false;
-    body_offset_ = 0;
+
     ESP_LOGI(TAG, "HTTP请求成功，状态码: %d", status_code_);
     return true;
 }
 
-size_t Ml307Http::GetBodyLength() const {
+int Ml307Http::GetStatusCode() {
+    if (status_code_ == -1) {
+        if (!FetchHeaders()) {
+            return -1;
+        }
+    }
+    return status_code_;
+}
+
+size_t Ml307Http::GetBodyLength() {
+    if (content_length_ == -1) {
+        if (!FetchHeaders()) {
+            return 0;
+        }
+    }
     return content_length_;
 }
 
-const std::string& Ml307Http::GetBody() {
+std::string Ml307Http::ReadAll() {
     std::unique_lock<std::mutex> lock(mutex_);
     
     auto timeout = std::chrono::milliseconds(timeout_ms_);
