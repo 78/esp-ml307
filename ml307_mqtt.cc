@@ -54,12 +54,6 @@ Ml307Mqtt::~Ml307Mqtt() {
 }
 
 bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
-    broker_address_ = broker_address;
-    broker_port_ = broker_port;
-    client_id_ = client_id;
-    username_ = username;
-    password_ = password;
-
     EventBits_t bits;
     if (IsConnected()) {
         // 断开之前的连接
@@ -71,7 +65,7 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         }
     }
 
-    if (broker_port_ == 8883) {
+    if (broker_port == 8883) {
         if (!modem_.Command(std::string("AT+MQTTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1")) {
             ESP_LOGE(TAG, "Failed to set MQTT to use SSL");
             return false;
@@ -97,7 +91,7 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
     }
 
     // 创建MQTT连接
-    std::string command = "AT+MQTTCONN=" + std::to_string(mqtt_id_) + ",\"" + broker_address_ + "\"," + std::to_string(broker_port_) + ",\"" + client_id_ + "\",\"" + username_ + "\",\"" + password_ + "\"";
+    std::string command = "AT+MQTTCONN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
     if (!modem_.Command(command)) {
         ESP_LOGE(TAG, "Failed to create MQTT connection");
         return false;

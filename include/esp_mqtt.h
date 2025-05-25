@@ -32,11 +32,6 @@ public:
 private:
     bool connected_ = false;
     EventGroupHandle_t event_group_handle_;
-    std::string broker_address_;
-    int broker_port_ = 1883;
-    std::string client_id_;
-    std::string username_;
-    std::string password_;
     std::string message_payload_;
     esp_mqtt_client_handle_t mqtt_client_handle_ = nullptr;
 
