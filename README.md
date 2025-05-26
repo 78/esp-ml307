@@ -35,7 +35,7 @@ void TestHttp(Ml307AtModem& modem) {
     http.Open("GET", "https://xiaozhi.me/");
     
     // print body length & body
-    ESP_LOGI(TAG, "Response body: %zu bytes", http.GetBodyLength());
+    ESP_LOGI(TAG, "Response body: %u bytes", http.GetBodyLength());
     ESP_LOGI(TAG, "Response body: %s", http.GetBody().c_str());
     http.Close();
 }

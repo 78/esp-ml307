@@ -32,7 +32,7 @@ Ml307Http::Ml307Http(Ml307AtModem& modem) : modem_(modem) {
                     }
                     body_offset_ += arguments[4].int_value;
                     if (arguments[3].int_value > body_offset_) {
-                        ESP_LOGE(TAG, "body_offset_: %zu, arguments[3].int_value: %d", body_offset_, arguments[3].int_value);
+                        ESP_LOGE(TAG, "body_offset_: %u, arguments[3].int_value: %d", body_offset_, arguments[3].int_value);
                         Close();
                         return;
                     }
@@ -83,7 +83,7 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
 
 int Ml307Http::Write(const char* buffer, size_t buffer_size) {
     char command[256];
-    sprintf(command, "AT+MHTTPCONTENT=%d,%d,%zu", http_id_, chunked_ ? (buffer_size == 0 ? 0 : 1) : 0, buffer_size);
+    sprintf(command, "AT+MHTTPCONTENT=%d,%d,%u", http_id_, chunked_ ? (buffer_size == 0 ? 0 : 1) : 0, buffer_size);
     modem_.Command(command);
     modem_.Command(std::string(buffer, buffer_size));
     return buffer_size;
@@ -182,12 +182,12 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
     for (auto it = headers_.begin(); it != headers_.end(); it++) {
         auto line = it->first + ": " + it->second;
         bool is_last = std::next(it) == headers_.end();
-        sprintf(command, "AT+MHTTPHEADER=%d,%d,%zu,\"%s\"", http_id_, is_last ? 0 : 1, line.size(), line.c_str());
+        sprintf(command, "AT+MHTTPHEADER=%d,%d,%u,\"%s\"", http_id_, is_last ? 0 : 1, line.size(), line.c_str());
         modem_.Command(command);
     }
 
     if (method_ == "POST" && content_.has_value()) {
-        sprintf(command, "AT+MHTTPCONTENT=%d,0,%zu", http_id_, content_.value().size());
+        sprintf(command, "AT+MHTTPCONTENT=%d,0,%u", http_id_, content_.value().size());
         modem_.Command(command);
         modem_.Command(content_.value());
         content_ = std::nullopt;
