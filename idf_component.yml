@@ -1,5 +1,5 @@
 dependencies:
-  idf: "^5.3"
+  idf: ">=5.3"
 description: ESP32 ML307R/ML307A Cat.1 Cellular Module
 files:
   exclude:
