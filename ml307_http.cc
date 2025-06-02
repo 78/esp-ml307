@@ -18,12 +18,22 @@ Ml307Http::Ml307Http(Ml307AtModem& modem) : modem_(modem) {
                     body_offset_ = 0;
                     body_.clear();
                     status_code_ = arguments[2].int_value;
-                    ParseResponseHeaders(modem_.DecodeHex(arguments[4].string_value));
+                    if (arguments.size() >= 5) {
+                        ParseResponseHeaders(modem_.DecodeHex(arguments[4].string_value));
+                    } else {
+                        // FIXME: <header> 被分包发送
+                        ESP_LOGE(TAG, "Missing header");
+                    }
                     xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED);
                 } else if (type == "content") {
                     // +MHTTPURC: "content",<httpid>,<content_len>,<sum_len>,<cur_len>,<data>
                     std::string decoded_data;
-                    modem_.DecodeHexAppend(decoded_data, arguments[5].string_value.c_str(), arguments[5].string_value.length());
+                    if (arguments.size() >= 6) {
+                        modem_.DecodeHexAppend(decoded_data, arguments[5].string_value.c_str(), arguments[5].string_value.length());
+                    } else {
+                        // FIXME: <data> 被分包发送
+                        ESP_LOGE(TAG, "Missing content");
+                    }
 
                     std::lock_guard<std::mutex> lock(mutex_);
                     body_.append(decoded_data);
@@ -83,7 +93,12 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
 
 int Ml307Http::Write(const char* buffer, size_t buffer_size) {
     char command[256];
-    sprintf(command, "AT+MHTTPCONTENT=%d,%d,%u", http_id_, chunked_ ? (buffer_size == 0 ? 0 : 1) : 0, buffer_size);
+    if (buffer_size == 0) { // FIXME: 模组好像不支持发送空数据
+        sprintf(command, "AT+MHTTPCONTENT=%d,0,2,\"0D0A\"", http_id_);
+        modem_.Command(command);
+        return 0;
+    }
+    sprintf(command, "AT+MHTTPCONTENT=%d,1,%u", http_id_, buffer_size);
     modem_.Command(command);
     modem_.Command(std::string(buffer, buffer_size));
     return buffer_size;

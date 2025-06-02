@@ -164,9 +164,9 @@ bool Ml307AtModem::Command(const std::string command, int timeout_ms) {
     if (debug_) {
         ESP_LOGI(TAG, ">> %.64s (%u bytes)", command.c_str(), command.length());
     }
-    response_.clear();
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        response_.clear();
         last_command_ = command + "\r\n";
         int ret = uart_write_bytes(uart_num_, last_command_.c_str(), last_command_.length());
         if (ret < 0) {
@@ -234,7 +234,21 @@ void Ml307AtModem::ReceiveTask() {
 bool Ml307AtModem::ParseResponse() {
     auto end_pos = rx_buffer_.find("\r\n");
     if (end_pos == std::string::npos) {
-        return false;
+        // FIXME: for +MHTTPURC: "ind", missing newline
+        if (rx_buffer_.size() >= 16 && memcmp(rx_buffer_.c_str(), "+MHTTPURC: \"ind\"", 16) == 0) {
+            // Find the end of this line and add \r\n if missing
+            auto next_plus = rx_buffer_.find("+", 1);
+            if (next_plus != std::string::npos) {
+                // Insert \r\n before the next + command
+                rx_buffer_.insert(next_plus, "\r\n");
+            } else {
+                // Append \r\n at the end
+                rx_buffer_.append("\r\n");
+            }
+            end_pos = rx_buffer_.find("\r\n");
+        } else {
+            return false;
+        }
     }
 
     // Ignore empty lines
@@ -300,6 +314,7 @@ bool Ml307AtModem::ParseResponse() {
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
         return true;
     } else {
+        std::lock_guard<std::mutex> lock(mutex_);
         response_ = rx_buffer_.substr(0, end_pos);
         rx_buffer_.erase(0, end_pos + 2);
         return true;
