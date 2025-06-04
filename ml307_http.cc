@@ -269,7 +269,7 @@ int Ml307Http::GetStatusCode() {
 }
 
 size_t Ml307Http::GetBodyLength() {
-    if (content_length_ == -1) {
+    if (status_code_ == -1) {
         if (!FetchHeaders()) {
             return 0;
         }
