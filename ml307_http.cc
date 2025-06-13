@@ -37,9 +37,14 @@ Ml307Http::Ml307Http(Ml307AtModem& modem) : modem_(modem) {
 
                     std::lock_guard<std::mutex> lock(mutex_);
                     body_.append(decoded_data);
-                    if (arguments[3].int_value >= arguments[2].int_value) {
-                        eof_ = true;
+
+                    // chunked传输时，EOF由cur_len == 0判断，非 chunked传输时，EOF由content_len判断
+                    if (response_chunked_) {
+                        eof_ = arguments[4].int_value == 0;
+                    } else {
+                        eof_ = arguments[3].int_value >= arguments[2].int_value;
                     }
+                    
                     body_offset_ += arguments[4].int_value;
                     if (arguments[3].int_value > body_offset_) {
                         ESP_LOGE(TAG, "body_offset_: %u, arguments[3].int_value: %d", body_offset_, arguments[3].int_value);
@@ -92,13 +97,12 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
 }
 
 int Ml307Http::Write(const char* buffer, size_t buffer_size) {
-    char command[256];
     if (buffer_size == 0) { // FIXME: 模组好像不支持发送空数据
-        sprintf(command, "AT+MHTTPCONTENT=%d,0,2,\"0D0A\"", http_id_);
+        std::string command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",0,2,\"0D0A\"";
         modem_.Command(command);
         return 0;
     }
-    sprintf(command, "AT+MHTTPCONTENT=%d,1,%u", http_id_, buffer_size);
+    std::string command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",1," + std::to_string(buffer_size);
     modem_.Command(command);
     modem_.Command(std::string(buffer, buffer_size));
     return buffer_size;
@@ -133,12 +137,22 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
         std::getline(line_iss, key, ':');
         std::getline(line_iss, value);
         response_headers_[key] = value;
+
+        // 检查是否为chunked传输编码
+        if (key == "Transfer-Encoding" && value.find("chunked") != std::string::npos) {
+            response_chunked_ = true;
+            ESP_LOGI(TAG, "Found chunked transfer encoding");
+        }
     }
 }
 
 bool Ml307Http::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
+    
+    // 判断是否为需要发送内容的HTTP方法
+    bool method_supports_content = (method_ == "POST" || method_ == "PUT");
+    
     // 解析URL
     size_t protocol_end = url.find("://");
     if (protocol_end != std::string::npos) {
@@ -159,8 +173,7 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
     }
 
     // 创建HTTP连接
-    char command[256];
-    sprintf(command, "AT+MHTTPCREATE=\"%s://%s\"", protocol_.c_str(), host_.c_str());
+    std::string command = "AT+MHTTPCREATE=\"" + protocol_ + "://" + host_ + "\"";
     if (!modem_.Command(command)) {
         ESP_LOGE(TAG, "创建HTTP连接失败");
         return false;
@@ -172,21 +185,21 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
         return false;
     }
     connected_ = true;
-    chunked_ = method_ == "POST" && !content_.has_value();
+    request_chunked_ = method_supports_content && !content_.has_value();
     ESP_LOGI(TAG, "HTTP 连接已创建，ID: %d", http_id_);
 
     if (protocol_ == "https") {
-        sprintf(command, "AT+MHTTPCFG=\"ssl\",%d,1,0", http_id_);
+        command = "AT+MHTTPCFG=\"ssl\"," + std::to_string(http_id_) + ",1,0";
         modem_.Command(command);
     }
 
-    if (chunked_) {
-        sprintf(command, "AT+MHTTPCFG=\"chunked\",%d,1", http_id_);
+    if (request_chunked_) {
+        command = "AT+MHTTPCFG=\"chunked\"," + std::to_string(http_id_) + ",1";
         modem_.Command(command);
     }
 
     // Set HEX encoding OFF
-    sprintf(command, "AT+MHTTPCFG=\"encoding\",%d,0,0", http_id_);
+    command = "AT+MHTTPCFG=\"encoding\"," + std::to_string(http_id_) + ",0,0";
     modem_.Command(command);
 
     // Set timeout (seconds): connect timeout, response timeout, input timeout
@@ -197,19 +210,19 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
     for (auto it = headers_.begin(); it != headers_.end(); it++) {
         auto line = it->first + ": " + it->second;
         bool is_last = std::next(it) == headers_.end();
-        sprintf(command, "AT+MHTTPHEADER=%d,%d,%u,\"%s\"", http_id_, is_last ? 0 : 1, line.size(), line.c_str());
+        command = "AT+MHTTPHEADER=" + std::to_string(http_id_) + "," + std::to_string(is_last ? 0 : 1) + "," + std::to_string(line.size()) + ",\"" + line + "\"";
         modem_.Command(command);
     }
 
-    if (method_ == "POST" && content_.has_value()) {
-        sprintf(command, "AT+MHTTPCONTENT=%d,0,%u", http_id_, content_.value().size());
+    if (method_supports_content && content_.has_value()) {
+        command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",0," + std::to_string(content_.value().size());
         modem_.Command(command);
         modem_.Command(content_.value());
         content_ = std::nullopt;
     }
 
     // Set HEX encoding ON
-    sprintf(command, "AT+MHTTPCFG=\"encoding\",%d,1,1", http_id_);
+    command = "AT+MHTTPCFG=\"encoding\"," + std::to_string(http_id_) + ",1,1";
     modem_.Command(command);
 
     // Send request
@@ -222,13 +235,13 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
             break;
         }
     }
-    sprintf(command, "AT+MHTTPREQUEST=%d,%d,0,", http_id_, method_value);
-    if (!modem_.Command(std::string(command) + modem_.EncodeHex(path_))) {
+    command = "AT+MHTTPREQUEST=" + std::to_string(http_id_) + "," + std::to_string(method_value) + ",0,";
+    if (!modem_.Command(command + modem_.EncodeHex(path_))) {
         ESP_LOGE(TAG, "发送HTTP请求失败");
         return false;
     }
 
-    if (chunked_) {
+    if (request_chunked_) {
         auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_IND, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
         if (!(bits & ML307_HTTP_EVENT_IND)) {
             ESP_LOGE(TAG, "等待HTTP IND超时");
@@ -297,8 +310,7 @@ void Ml307Http::Close() {
     if (!connected_) {
         return;
     }
-    char command[32];
-    sprintf(command, "AT+MHTTPDEL=%d", http_id_);
+    std::string command = "AT+MHTTPDEL=" + std::to_string(http_id_);
     modem_.Command(command);
 
     connected_ = false;

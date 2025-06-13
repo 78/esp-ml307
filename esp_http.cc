@@ -49,7 +49,8 @@ bool EspHttp::Open(const std::string& method, const std::string& url) {
         esp_http_client_set_header(client_, header.first.c_str(), header.second.c_str());
     }
 
-    chunked_ = method == "POST" && !content_.has_value();
+    bool method_supports_content = (method == "POST" || method == "PUT");
+    chunked_ = method_supports_content && !content_.has_value();
     size_t post_content_length = content_.has_value() ? content_.value().length() : 0;
     esp_err_t err = esp_http_client_open(client_, chunked_ ? -1 : post_content_length);
     if (err != ESP_OK) {
@@ -58,7 +59,7 @@ bool EspHttp::Open(const std::string& method, const std::string& url) {
         return false;
     }
 
-    if (content_.has_value() && method == "POST") {
+    if (content_.has_value() && method_supports_content) {
         esp_http_client_write(client_, content_.value().c_str(), content_.value().length());
         content_ = std::nullopt;
     }

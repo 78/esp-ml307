@@ -61,7 +61,8 @@ private:
     size_t content_length_ = 0;
     bool eof_ = false;
     bool connected_ = false;
-    bool chunked_ = false;
+    bool request_chunked_ = false;
+    bool response_chunked_ = false;
 
     bool FetchHeaders();
     void ParseResponseHeaders(const std::string& headers);

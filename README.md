@@ -8,7 +8,7 @@ This project is initially created for https://github.com/78/xiaozhi-esp32
 - AT Command
 - MQTT / MQTTS
 - HTTP / HTTPS
-- SSLTCP
+- TCP / SSLTCP
 - WebSocket
 
 ## Supported Modules
@@ -20,10 +20,11 @@ This project is initially created for https://github.com/78/xiaozhi-esp32
 
 ```cpp
 #include "esp_log.h"
-#include "Ml307AtModem.h"
-#include "Ml307SslTransport.h"
-#include "Ml307Http.h"
-#include "Ml307Mqtt.h"
+#include "ml307_at_modem.h"
+#include "ml307_ssl_transport.h"
+#include "ml307_http.h"
+#include "ml307_mqtt.h"
+#include "web_socket.h"
 
 static const char *TAG = "ML307";
 
@@ -36,7 +37,7 @@ void TestHttp(Ml307AtModem& modem) {
     
     // print body length & body
     ESP_LOGI(TAG, "Response body: %u bytes", http.GetBodyLength());
-    ESP_LOGI(TAG, "Response body: %s", http.GetBody().c_str());
+    ESP_LOGI(TAG, "Response body: %s", http.ReadAll().c_str());
     http.Close();
 }
 
@@ -60,7 +61,8 @@ void TestMqtt(Ml307AtModem& modem) {
 void TestWebSocket(Ml307AtModem& modem) {
     ESP_LOGI(TAG, "Starting WebSocket test");
 
-    WebSocket ws(new Ml307SslTransport(modem, 0));
+    Ml307SslTransport transport(modem, 0);
+    WebSocket ws(&transport);
     ws.SetHeader("Protocol-Version", "2");
 
     ws.OnConnected([]() {
