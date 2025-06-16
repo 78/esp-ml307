@@ -12,6 +12,7 @@ Ml307Mqtt::Ml307Mqtt(Ml307AtModem& modem, int mqtt_id) : modem_(modem), mqtt_id_
                 auto type = arguments[0].string_value;
                 if (type == "conn") {
                     if (arguments[2].int_value == 0) {
+                        connected_ = true;
                         xEventGroupSetBits(event_group_handle_, MQTT_CONNECTED_EVENT);
                     } else {
                         if (connected_) {
@@ -104,7 +105,6 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         return false;
     }
 
-    connected_ = true;
     if (on_connected_callback_) {
         on_connected_callback_();
     }

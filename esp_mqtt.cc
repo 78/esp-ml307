@@ -43,14 +43,14 @@ bool EspMqtt::Connect(const std::string broker_address, int broker_port, const s
 
     auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT | MQTT_ERROR_EVENT,
         pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
-    connected_ = (bits & MQTT_CONNECTED_EVENT) != 0;
-    return connected_;
+    return bits & MQTT_CONNECTED_EVENT;
 }
 
 void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *event_data) {
     auto event = (esp_mqtt_event_t*)event_data;
     switch (event_id) {
     case MQTT_EVENT_CONNECTED:
+        connected_ = true;
         xEventGroupSetBits(event_group_handle_, MQTT_CONNECTED_EVENT);
         break;
     case MQTT_EVENT_DISCONNECTED:
