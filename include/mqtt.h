@@ -21,7 +21,7 @@ public:
     virtual void OnMessage(std::function<void(const std::string& topic, const std::string& payload)> callback) { on_message_callback_ = callback; }
 
 protected:
-    int keep_alive_seconds_ = 60;
+    int keep_alive_seconds_ = 120;
     std::function<void(const std::string& topic, const std::string& payload)> on_message_callback_;
     std::function<void()> on_connected_callback_;
     std::function<void()> on_disconnected_callback_;

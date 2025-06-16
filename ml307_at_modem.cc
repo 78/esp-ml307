@@ -432,3 +432,14 @@ void Ml307AtModem::ResetConnections() {
     Command("AT+MHTTPDEL=2");
     Command("AT+MHTTPDEL=3");
 }
+
+bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
+    if (enable) {
+        if (delay_seconds > 0) {
+            Command("AT+MLPMCFG=\"delaysleep\"," + std::to_string(delay_seconds));
+        }
+        return Command("AT+MLPMCFG=\"sleepmode\",2,0");
+    } else {
+        return Command("AT+MLPMCFG=\"sleepmode\",0,0");
+    }
+}

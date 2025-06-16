@@ -78,6 +78,7 @@ public:
     void SetDebug(bool debug);
     bool SetBaudRate(int new_baud_rate);
     int WaitForNetworkReady();
+    bool SetSleepMode(bool enable, int delay_seconds=0);
 
     std::string GetImei();
     std::string GetIccid();
