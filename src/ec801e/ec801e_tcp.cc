@@ -73,8 +73,6 @@ Ec801ETcp::~Ec801ETcp() {
 }
 
 bool Ec801ETcp::Connect(const std::string& host, int port) {
-    char command[64];
-
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_TCP_CONNECTED | EC801E_TCP_DISCONNECTED | EC801E_TCP_ERROR);
 
@@ -82,7 +80,7 @@ bool Ec801ETcp::Connect(const std::string& host, int port) {
     at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1");
 
     // 检查这个 id 是否已经连接
-    sprintf(command, "AT+QISTATE=1,%d", tcp_id_);
+    std::string command = "AT+QISTATE=1," + std::to_string(tcp_id_);
     at_uart_->SendCommand(command);
 
     // 断开之前的连接（不触发回调事件）
@@ -93,7 +91,7 @@ bool Ec801ETcp::Connect(const std::string& host, int port) {
     }
 
     // 打开 TCP 连接
-    sprintf(command, "AT+QIOPEN=1,%d,\"TCP\",\"%s\",%d,0,1", tcp_id_, host.c_str(), port);
+    command = "AT+QIOPEN=1," + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",0,1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open TCP connection");
         return false;

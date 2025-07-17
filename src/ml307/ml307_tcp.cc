@@ -69,13 +69,11 @@ Ml307Tcp::~Ml307Tcp() {
 }
 
 bool Ml307Tcp::Connect(const std::string& host, int port) {
-    char command[64];
-
     // Clear bits
     xEventGroupClearBits(event_group_handle_, ML307_TCP_CONNECTED | ML307_TCP_DISCONNECTED | ML307_TCP_ERROR);
 
     // 检查这个 id 是否已经连接
-    sprintf(command, "AT+MIPSTATE=%d", tcp_id_);
+    std::string command = "AT+MIPSTATE=" + std::to_string(tcp_id_);
     at_uart_->SendCommand(command);
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_TCP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(TCP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_TCP_INITIALIZED)) {
@@ -85,7 +83,7 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
 
     // 断开之前的连接
     if (instance_active_) {
-        sprintf(command, "AT+MIPCLOSE=%d", tcp_id_);
+        command = "AT+MIPCLOSE=" + std::to_string(tcp_id_);
         if (at_uart_->SendCommand(command)) {
             // 等待断开完成
             xEventGroupWaitBits(event_group_handle_, ML307_TCP_DISCONNECTED, pdTRUE, pdFALSE, pdMS_TO_TICKS(TCP_CONNECT_TIMEOUT_MS));
@@ -99,14 +97,14 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
     }
 
     // 使用 HEX 编码
-    sprintf(command, "AT+MIPCFG=\"encoding\",%d,1,1", tcp_id_);
+    command = "AT+MIPCFG=\"encoding\"," + std::to_string(tcp_id_) + ",1,1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set HEX encoding");
         return false;
     }
 
     // 打开 TCP 连接
-    sprintf(command, "AT+MIPOPEN=%d,\"TCP\",\"%s\",%d,,0", tcp_id_, host.c_str(), port);
+    command = "AT+MIPOPEN=" + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",,0";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open TCP connection");
         return false;
@@ -140,8 +138,7 @@ void Ml307Tcp::Disconnect() {
 }
 
 bool Ml307Tcp::ConfigureSsl(int port) {
-    char command[64];
-    sprintf(command, "AT+MIPCFG=\"ssl\",%d,0,0", tcp_id_);
+    std::string command = "AT+MIPCFG=\"ssl\"," + std::to_string(tcp_id_) + ",0,0";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set SSL configuration");
         return false;

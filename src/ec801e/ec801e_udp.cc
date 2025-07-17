@@ -64,8 +64,6 @@ Ec801EUdp::~Ec801EUdp() {
 }
 
 bool Ec801EUdp::Connect(const std::string& host, int port) {
-    char command[64];
-
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_UDP_CONNECTED | EC801E_UDP_DISCONNECTED | EC801E_UDP_ERROR);
 
@@ -73,7 +71,7 @@ bool Ec801EUdp::Connect(const std::string& host, int port) {
     at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1");
 
     // 检查这个 id 是否已经连接
-    sprintf(command, "AT+QISTATE=1,%d", udp_id_);
+    std::string command = "AT+QISTATE=1," + std::to_string(udp_id_);
     at_uart_->SendCommand(command);
 
     // 断开之前的连接（不触发回调事件）
@@ -84,7 +82,7 @@ bool Ec801EUdp::Connect(const std::string& host, int port) {
     }
 
     // 打开 UDP 连接
-    sprintf(command, "AT+QIOPEN=1,%d,\"UDP\",\"%s\",%d,0,1", udp_id_, host.c_str(), port);
+    command = "AT+QIOPEN=1," + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",0,1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open UDP connection");
         return false;

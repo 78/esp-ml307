@@ -71,8 +71,6 @@ Ec801ESsl::~Ec801ESsl() {
 }
 
 bool Ec801ESsl::Connect(const std::string& host, int port) {
-    char command[64];
-
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_SSL_CONNECTED | EC801E_SSL_DISCONNECTED | EC801E_SSL_ERROR);
 
@@ -84,7 +82,7 @@ bool Ec801ESsl::Connect(const std::string& host, int port) {
     // at_uart_->SendCommand("AT+QSSLCFG=\"cacert\",1,\"UFS:cacert.pem\"");
 
     // 检查这个 id 是否已经连接
-    sprintf(command, "AT+QSSLSTATE=1,%d", ssl_id_);
+    std::string command = "AT+QSSLSTATE=1," + std::to_string(ssl_id_);
     at_uart_->SendCommand(command);
 
     // 断开之前的连接（不触发回调事件）
@@ -95,7 +93,7 @@ bool Ec801ESsl::Connect(const std::string& host, int port) {
     }
 
     // 打开 TCP 连接
-    sprintf(command, "AT+QSSLOPEN=1,1,%d,\"%s\",%d,1", ssl_id_, host.c_str(), port);
+    command = "AT+QSSLOPEN=1,1," + std::to_string(ssl_id_) + ",\"" + host + "\"," + std::to_string(port) + ",1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open TCP connection");
         return false;

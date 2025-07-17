@@ -65,13 +65,11 @@ Ml307Udp::~Ml307Udp() {
 }
 
 bool Ml307Udp::Connect(const std::string& host, int port) {
-    char command[64];
-
     // Clear bits
     xEventGroupClearBits(event_group_handle_, ML307_UDP_CONNECTED | ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
 
     // 检查这个 id 是否已经连接
-    sprintf(command, "AT+MIPSTATE=%d", udp_id_);
+    std::string command = "AT+MIPSTATE=" + std::to_string(udp_id_);
     at_uart_->SendCommand(command);
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_UDP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_UDP_INITIALIZED)) {
@@ -81,7 +79,7 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
 
     // 断开之前的连接
     if (instance_active_) {
-        sprintf(command, "AT+MIPCLOSE=%d", udp_id_);
+        command = "AT+MIPCLOSE=" + std::to_string(udp_id_);
         if (at_uart_->SendCommand(command)) {
             // 等待断开完成
             xEventGroupWaitBits(event_group_handle_, ML307_UDP_DISCONNECTED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
@@ -89,19 +87,19 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
     }
 
     // 使用 HEX 编码
-    sprintf(command, "AT+MIPCFG=\"encoding\",%d,1,1", udp_id_);
+    command = "AT+MIPCFG=\"encoding\"," + std::to_string(udp_id_) + ",1,1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set HEX encoding");
         return false;
     }
-    sprintf(command, "AT+MIPCFG=\"ssl\",%d,0,0", udp_id_);
+    command = "AT+MIPCFG=\"ssl\"," + std::to_string(udp_id_) + ",0,0";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set SSL configuration");
         return false;
     }
 
     // 打开 UDP 连接
-    sprintf(command, "AT+MIPOPEN=%d,\"UDP\",\"%s\",%d,,0", udp_id_, host.c_str(), port);
+    command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",,0";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open UDP connection");
         return false;

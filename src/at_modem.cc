@@ -29,13 +29,15 @@ std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, g
     ESP_LOGI(TAG, "Detected modem: %s", response.c_str());
     
     // 检查响应中的模组型号
-    if (response.find("ML307") == 0) {
-        return std::make_unique<Ml307AtModem>(uart);
-    } else if (response.find("EC801E") == 0) {
+    if (response.find("EC801E") == 0) {
         return std::make_unique<Ec801EAtModem>(uart);
+    } else if (response.find("NT26K") == 0) {
+        return std::make_unique<Ec801EAtModem>(uart);
+    } else if (response.find("ML307") == 0) {
+        return std::make_unique<Ml307AtModem>(uart);
     } else {
-        ESP_LOGE(TAG, "Unrecognized modem type: %s", response.c_str());
-        return nullptr;
+        ESP_LOGE(TAG, "Unrecognized modem type: %s, use ML307 AtModem as default", response.c_str());
+        return std::make_unique<Ml307AtModem>(uart);
     }
 }
 
