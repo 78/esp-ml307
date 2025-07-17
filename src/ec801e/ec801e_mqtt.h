@@ -1,25 +1,29 @@
-#ifndef ML307_MQTT_H
-#define ML307_MQTT_H
+#ifndef EC801E_MQTT_H
+#define EC801E_MQTT_H
 
 #include "mqtt.h"
 
-#include "ml307_at_modem.h"
+#include "at_uart.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
 #include <string>
 #include <functional>
 
-#define MQTT_CONNECT_TIMEOUT_MS 10000
+#define EC801E_MQTT_CONNECT_TIMEOUT_MS 10000
 
-#define MQTT_INITIALIZED_EVENT BIT0
-#define MQTT_CONNECTED_EVENT BIT1
-#define MQTT_DISCONNECTED_EVENT BIT2
+#define EC801E_MQTT_INITIALIZED_EVENT BIT0
+#define EC801E_MQTT_CONNECTED_EVENT BIT1
+#define EC801E_MQTT_DISCONNECTED_EVENT BIT2
+#define EC801E_MQTT_PUBLISH_COMPLETE BIT3
+#define EC801E_MQTT_PUBLISH_FAILED BIT4
+#define EC801E_MQTT_OPEN_COMPLETE BIT5
+#define EC801E_MQTT_OPEN_FAILED BIT6
 
-class Ml307Mqtt : public Mqtt {
+class Ec801EMqtt : public Mqtt {
 public:
-    Ml307Mqtt(Ml307AtModem& modem, int mqtt_id);
-    ~Ml307Mqtt();
+    Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id);
+    ~Ec801EMqtt();
 
     bool Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password);
     void Disconnect();
@@ -29,13 +33,14 @@ public:
     bool IsConnected();
 
 private:
-    Ml307AtModem& modem_;
+    std::shared_ptr<AtUart> at_uart_;
     int mqtt_id_;
     bool connected_ = false;
+    int error_code_ = 0;
     EventGroupHandle_t event_group_handle_;
     std::string message_payload_;
 
-    std::list<CommandResponseCallback>::iterator command_callback_it_;
+    std::list<UrcCallback>::iterator urc_callback_it_;
 
     std::string ErrorToString(int error_code);
 };

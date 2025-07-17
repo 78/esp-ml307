@@ -5,12 +5,16 @@
 #include <string>
 #include <map>
 #include <thread>
-#include "transport.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
 
+#include "tcp.h"
+
+class NetworkInterface;
 
 class WebSocket {
 public:
-    WebSocket(Transport *transport);
+    WebSocket(NetworkInterface* network, int connect_id);
     ~WebSocket();
 
     void SetHeader(const char* key, const char* value);
@@ -28,10 +32,19 @@ public:
     void OnError(std::function<void(int)> callback);
 
 private:
-    Transport *transport_;
-    std::thread receive_thread_;
+    NetworkInterface* network_;
+    int connect_id_;
+    std::unique_ptr<Tcp> tcp_;
     bool continuation_ = false;
     size_t receive_buffer_size_ = 2048;
+    std::string receive_buffer_;
+    bool handshake_completed_ = false;
+    bool connected_ = false;
+    
+    // FreeRTOS 事件组用于同步握手
+    EventGroupHandle_t handshake_event_group_;
+    static const EventBits_t HANDSHAKE_SUCCESS_BIT = BIT0;
+    static const EventBits_t HANDSHAKE_FAILED_BIT = BIT1;
 
     std::map<std::string, std::string> headers_;
     std::function<void(const char*, size_t, bool binary)> on_data_;
@@ -39,8 +52,7 @@ private:
     std::function<void()> on_connected_;
     std::function<void()> on_disconnected_;
 
-    void ReceiveTask();
-    bool SendAllRaw(const void* data, size_t len);
+    void OnTcpData(const std::string& data);
     bool SendControlFrame(uint8_t opcode, const void* data, size_t len);
 };
 

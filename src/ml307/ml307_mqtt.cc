@@ -3,10 +3,10 @@
 
 static const char *TAG = "Ml307Mqtt";
 
-Ml307Mqtt::Ml307Mqtt(Ml307AtModem& modem, int mqtt_id) : modem_(modem), mqtt_id_(mqtt_id) {
+Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at_uart), mqtt_id_(mqtt_id) {
     event_group_handle_ = xEventGroupCreate();
 
-    command_callback_it_ = modem_.RegisterCommandResponseCallback([this](const std::string command, const std::vector<AtArgumentValue>& arguments) {
+    urc_callback_it_ = at_uart_->RegisterUrcCallback([this](const std::string& command, const std::vector<AtArgumentValue>& arguments) {
         if (command == "MQTTURC" && arguments.size() >= 2) {
             if (arguments[1].int_value == mqtt_id_) {
                 auto type = arguments[0].string_value;
@@ -29,10 +29,10 @@ Ml307Mqtt::Ml307Mqtt(Ml307AtModem& modem, int mqtt_id) : modem_(modem), mqtt_id_
                     auto topic = arguments[3].string_value;
                     if (arguments[4].int_value == arguments[5].int_value) {
                         if (on_message_callback_) {
-                            on_message_callback_(topic, modem_.DecodeHex(arguments[6].string_value));
+                            on_message_callback_(topic, at_uart_->DecodeHex(arguments[6].string_value));
                         }
                     } else {
-                        message_payload_.append(modem_.DecodeHex(arguments[6].string_value));
+                        message_payload_.append(at_uart_->DecodeHex(arguments[6].string_value));
                         if (message_payload_.size() >= arguments[4].int_value && on_message_callback_) {
                             on_message_callback_(topic, message_payload_);
                             message_payload_.clear();
@@ -50,7 +50,7 @@ Ml307Mqtt::Ml307Mqtt(Ml307AtModem& modem, int mqtt_id) : modem_(modem), mqtt_id_
 }
 
 Ml307Mqtt::~Ml307Mqtt() {
-    modem_.UnregisterCommandResponseCallback(command_callback_it_);
+    at_uart_->UnregisterUrcCallback(urc_callback_it_);
     vEventGroupDelete(event_group_handle_);
 }
 
@@ -67,33 +67,33 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
     }
 
     if (broker_port == 8883) {
-        if (!modem_.Command(std::string("AT+MQTTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1")) {
+        if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1")) {
             ESP_LOGE(TAG, "Failed to set MQTT to use SSL");
             return false;
         }
     }
 
     // Set clean session
-    if (!modem_.Command(std::string("AT+MQTTCFG=\"clean\",") + std::to_string(mqtt_id_) + ",1")) {
+    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"clean\",") + std::to_string(mqtt_id_) + ",1")) {
         ESP_LOGE(TAG, "Failed to set MQTT clean session");
         return false;
     }
 
     // Set keep alive
-    if (!modem_.Command(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
+    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
         ESP_LOGE(TAG, "Failed to set MQTT keep alive");
         return false;
     }
 
     // Set HEX encoding (ASCII for sending, HEX for receiving)
-    if (!modem_.Command("AT+MQTTCFG=\"encoding\"," + std::to_string(mqtt_id_) + ",0,1")) {
+    if (!at_uart_->SendCommand("AT+MQTTCFG=\"encoding\"," + std::to_string(mqtt_id_) + ",0,1")) {
         ESP_LOGE(TAG, "Failed to set MQTT to use HEX encoding");
         return false;
     }
 
     // 创建MQTT连接
     std::string command = "AT+MQTTCONN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
-    if (!modem_.Command(command)) {
+    if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to create MQTT connection");
         return false;
     }
@@ -113,7 +113,7 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
 
 bool Ml307Mqtt::IsConnected() {
     // 检查这个 id 是否已经连接
-    modem_.Command(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_));
+    at_uart_->SendCommand(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_));
     auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_INITIALIZED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
     if (!(bits & MQTT_INITIALIZED_EVENT)) {
         ESP_LOGE(TAG, "Failed to initialize MQTT connection");
@@ -126,7 +126,7 @@ void Ml307Mqtt::Disconnect() {
     if (!connected_) {
         return;
     }
-    modem_.Command(std::string("AT+MQTTDISC=") + std::to_string(mqtt_id_));
+    at_uart_->SendCommand(std::string("AT+MQTTDISC=") + std::to_string(mqtt_id_));
 }
 
 bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int qos) {
@@ -137,10 +137,10 @@ bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int 
     std::string command = "AT+MQTTPUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",";
     command += std::to_string(qos) + ",0,0,";
     command += std::to_string(payload.size());
-    if (!modem_.Command(command)) {
+    if (!at_uart_->SendCommand(command)) {
         return false;
     }
-    return modem_.Command(payload);
+    return at_uart_->SendCommand(payload);
 }
 
 bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {
@@ -148,7 +148,7 @@ bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {
         return false;
     }
     std::string command = "AT+MQTTSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\"," + std::to_string(qos);
-    return modem_.Command(command);
+    return at_uart_->SendCommand(command);
 }
 
 bool Ml307Mqtt::Unsubscribe(const std::string topic) {
@@ -156,7 +156,7 @@ bool Ml307Mqtt::Unsubscribe(const std::string topic) {
         return false;
     }
     std::string command = "AT+MQTTUNSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\"";
-    return modem_.Command(command);
+    return at_uart_->SendCommand(command);
 }
 
 std::string Ml307Mqtt::ErrorToString(int error_code) {

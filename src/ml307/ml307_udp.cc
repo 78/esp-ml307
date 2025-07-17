@@ -5,24 +5,24 @@
 #define TAG "Ml307Udp"
 
 
-Ml307Udp::Ml307Udp(Ml307AtModem& modem, int udp_id) : modem_(modem), udp_id_(udp_id) {
+Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_uart), udp_id_(udp_id) {
     event_group_handle_ = xEventGroupCreate();
 
-    command_callback_it_ = modem_.RegisterCommandResponseCallback([this](const std::string& command, const std::vector<AtArgumentValue>& arguments) {
+    urc_callback_it_ = at_uart_->RegisterUrcCallback([this](const std::string& command, const std::vector<AtArgumentValue>& arguments) {
         if (command == "MIPOPEN" && arguments.size() == 2) {
             if (arguments[0].int_value == udp_id_) {
-                if (arguments[1].int_value == 0) {
-                    connected_ = true;
+                connected_ = arguments[1].int_value == 0;
+                if (connected_) {
+                    instance_active_ = true;
                     xEventGroupClearBits(event_group_handle_, ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_CONNECTED);
                 } else {
-                    connected_ = false;
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_ERROR);
                 }
             }
         } else if (command == "MIPCLOSE" && arguments.size() == 1) {
             if (arguments[0].int_value == udp_id_) {
-                connected_ = false;
+                instance_active_ = false;
                 xEventGroupSetBits(event_group_handle_, ML307_UDP_DISCONNECTED);
             }
         } else if (command == "MIPSEND" && arguments.size() == 2) {
@@ -32,11 +32,12 @@ Ml307Udp::Ml307Udp(Ml307AtModem& modem, int udp_id) : modem_(modem), udp_id_(udp
         } else if (command == "MIPURC" && arguments.size() == 4) {
             if (arguments[1].int_value == udp_id_) {
                 if (arguments[0].string_value == "rudp") {
-                    if (message_callback_) {
-                        message_callback_(modem_.DecodeHex(arguments[3].string_value));
+                    if (connected_ && message_callback_) {
+                        message_callback_(at_uart_->DecodeHex(arguments[3].string_value));
                     }
                 } else if (arguments[0].string_value == "disconn") {
                     connected_ = false;
+                    instance_active_ = false;
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_DISCONNECTED);
                 } else {
                     ESP_LOGE(TAG, "Unknown MIPURC command: %s", arguments[0].string_value.c_str());
@@ -44,11 +45,8 @@ Ml307Udp::Ml307Udp(Ml307AtModem& modem, int udp_id) : modem_(modem), udp_id_(udp
             }
         } else if (command == "MIPSTATE" && arguments.size() == 5) {
             if (arguments[0].int_value == udp_id_) {
-                if (arguments[4].string_value == "INITIAL") {
-                    connected_ = false;
-                } else {
-                    connected_ = true;
-                }
+                connected_ = arguments[4].string_value == "CONNECTED";
+                instance_active_ = arguments[4].string_value != "INITIAL";
                 xEventGroupSetBits(event_group_handle_, ML307_UDP_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
@@ -60,7 +58,10 @@ Ml307Udp::Ml307Udp(Ml307AtModem& modem, int udp_id) : modem_(modem), udp_id_(udp
 
 Ml307Udp::~Ml307Udp() {
     Disconnect();
-    modem_.UnregisterCommandResponseCallback(command_callback_it_);
+    at_uart_->UnregisterUrcCallback(urc_callback_it_);
+    if (event_group_handle_) {
+        vEventGroupDelete(event_group_handle_);
+    }
 }
 
 bool Ml307Udp::Connect(const std::string& host, int port) {
@@ -71,7 +72,7 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
 
     // 检查这个 id 是否已经连接
     sprintf(command, "AT+MIPSTATE=%d", udp_id_);
-    modem_.Command(command);
+    at_uart_->SendCommand(command);
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_UDP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_UDP_INITIALIZED)) {
         ESP_LOGE(TAG, "Failed to initialize TCP connection");
@@ -79,21 +80,30 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
     }
 
     // 断开之前的连接
-    if (connected_) {
-        Disconnect();
-    }
-
-    // 打开 TCP 连接
-    sprintf(command, "AT+MIPOPEN=%d,\"UDP\",\"%s\",%d,,0", udp_id_, host.c_str(), port);
-    if (!modem_.Command(command)) {
-        ESP_LOGE(TAG, "Failed to open UDP connection");
-        return false;
+    if (instance_active_) {
+        sprintf(command, "AT+MIPCLOSE=%d", udp_id_);
+        if (at_uart_->SendCommand(command)) {
+            // 等待断开完成
+            xEventGroupWaitBits(event_group_handle_, ML307_UDP_DISCONNECTED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
+        }
     }
 
     // 使用 HEX 编码
     sprintf(command, "AT+MIPCFG=\"encoding\",%d,1,1", udp_id_);
-    if (!modem_.Command(command)) {
+    if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set HEX encoding");
+        return false;
+    }
+    sprintf(command, "AT+MIPCFG=\"ssl\",%d,0,0", udp_id_);
+    if (!at_uart_->SendCommand(command)) {
+        ESP_LOGE(TAG, "Failed to set SSL configuration");
+        return false;
+    }
+
+    // 打开 UDP 连接
+    sprintf(command, "AT+MIPOPEN=%d,\"UDP\",\"%s\",%d,,0", udp_id_, host.c_str(), port);
+    if (!at_uart_->SendCommand(command)) {
+        ESP_LOGE(TAG, "Failed to open UDP connection");
         return false;
     }
 
@@ -108,11 +118,12 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
 
 
 void Ml307Udp::Disconnect() {
-    if (!connected_) {
+    if (!instance_active_) {
         return;
     }
+
+    at_uart_->SendCommand("AT+MIPCLOSE=" + std::to_string(udp_id_));
     connected_ = false;
-    modem_.Command("AT+MIPCLOSE=" + std::to_string(udp_id_));
 }
 
 int Ml307Udp::Send(const std::string& data) {
@@ -132,9 +143,10 @@ int Ml307Udp::Send(const std::string& data) {
     std::string command = "AT+MIPSEND=" + std::to_string(udp_id_) + "," + std::to_string(data.size()) + ",";
     
     // 直接在command字符串上进行十六进制编码
-    modem_.EncodeHexAppend(command, data.c_str(), data.size());
+    at_uart_->EncodeHexAppend(command, data.data(), data.size());
+    command += "\r\n";
     
-    if (!modem_.Command(command, 100)) {
+    if (!at_uart_->SendCommand(command, 100, false)) {
         ESP_LOGE(TAG, "发送数据块失败");
         return -1;
     }

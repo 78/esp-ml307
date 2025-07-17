@@ -2,7 +2,7 @@
 #define ML307_UDP_H
 
 #include "udp.h"
-#include "ml307_at_modem.h"
+#include "at_uart.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
@@ -18,7 +18,7 @@
 
 class Ml307Udp : public Udp {
 public:
-    Ml307Udp(Ml307AtModem& modem, int udp_id);
+    Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id);
     ~Ml307Udp();
 
     bool Connect(const std::string& host, int port) override;
@@ -26,10 +26,11 @@ public:
     int Send(const std::string& data) override;
 
 private:
-    Ml307AtModem& modem_;
+    std::shared_ptr<AtUart> at_uart_;
     int udp_id_;
+    bool instance_active_ = false;
     EventGroupHandle_t event_group_handle_;
-    std::list<CommandResponseCallback>::iterator command_callback_it_;
+    std::list<UrcCallback>::iterator urc_callback_it_;
 };
 
 #endif // ML307_UDP_H
