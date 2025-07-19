@@ -121,7 +121,7 @@ void EspSsl::ReceiveTask() {
         
         data.resize(ret);
         if (stream_callback_) {
-            stream_callback_(data);
+            stream_callback_(std::move(data));
         }
     }
 }

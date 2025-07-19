@@ -79,6 +79,8 @@ private:
     // 用于读取操作的专门锁和缓冲区队列
     std::mutex read_mutex_;
     std::deque<DataChunk> body_chunks_;
+    std::condition_variable write_cv_;
+    const size_t MAX_BODY_CHUNKS_SIZE = 8192;
     
     int status_code_ = -1;
     int timeout_ms_ = 30000;

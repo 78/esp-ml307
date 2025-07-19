@@ -225,6 +225,19 @@ void HttpClient::Close() {
 
 void HttpClient::OnTcpData(const std::string& data) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 检查 body_chunks_ 大小，如果超过8KB则阻塞
+    {
+        std::unique_lock<std::mutex> read_lock(read_mutex_);
+        write_cv_.wait(read_lock, [this, &data] {
+            size_t total_size = data.size();
+            for (const auto& chunk : body_chunks_) {
+                total_size += chunk.data.size();
+            }
+            return total_size < MAX_BODY_CHUNKS_SIZE || !connected_;
+        });
+    }
+    
     rx_buffer_.append(data);
     ProcessReceivedData();
     cv_.notify_one();
@@ -496,6 +509,8 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
             if (front_chunk.empty()) {
                 body_chunks_.pop_front();
             }
+            // 通知等待的写入操作
+            write_cv_.notify_one();
             return static_cast<int>(bytes_read);
         }
         
@@ -529,6 +544,8 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
             if (front_chunk.empty()) {
                 body_chunks_.pop_front();
             }
+            // 通知等待的写入操作
+            write_cv_.notify_one();
             return static_cast<int>(bytes_read);
         }
         
@@ -608,6 +625,7 @@ void HttpClient::AddBodyData(const std::string& data) {
     std::lock_guard<std::mutex> read_lock(read_mutex_);
     body_chunks_.emplace_back(data);  // 使用构造函数，避免额外的拷贝
     cv_.notify_one();  // 通知有新数据
+    write_cv_.notify_one();  // 通知写入操作
 }
 
 void HttpClient::AddBodyData(std::string&& data) {
@@ -616,6 +634,7 @@ void HttpClient::AddBodyData(std::string&& data) {
     std::lock_guard<std::mutex> read_lock(read_mutex_);
     body_chunks_.emplace_back(std::move(data));  // 使用移动语义，避免拷贝
     cv_.notify_one();  // 通知有新数据
+    write_cv_.notify_one();  // 通知写入操作
 }
 
 std::string HttpClient::ReadAll() {

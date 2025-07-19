@@ -11,7 +11,7 @@ Ec801EMqtt::Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(
             if (arguments[0].int_value == mqtt_id_) {
                 auto topic = arguments[2].string_value;
                 if (on_message_callback_) {
-                    on_message_callback_(topic, at_uart_->DecodeHex(arguments[3].string_value));
+                    on_message_callback_(topic, std::move(at_uart_->DecodeHex(arguments[3].string_value)));
                 }
             }
         } else if (command == "QMTSTAT" && arguments.size() == 1) {

@@ -156,7 +156,7 @@ std::string AtModem::GetCarrierName() {
 }
 
 int AtModem::GetCsq() {
-    at_uart_->SendCommand("AT+CSQ");
+    at_uart_->SendCommand("AT+CSQ", 10);
     return csq_;
 }
 

@@ -33,7 +33,7 @@ Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_ua
             if (arguments[1].int_value == udp_id_) {
                 if (arguments[0].string_value == "rudp") {
                     if (connected_ && message_callback_) {
-                        message_callback_(at_uart_->DecodeHex(arguments[3].string_value));
+                        message_callback_(std::move(at_uart_->DecodeHex(arguments[3].string_value)));
                     }
                 } else if (arguments[0].string_value == "disconn") {
                     connected_ = false;

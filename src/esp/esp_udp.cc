@@ -78,7 +78,7 @@ void EspUdp::ReceiveTask() {
         }
         data.resize(ret);
         if (message_callback_) {
-            message_callback_(data);
+            message_callback_(std::move(data));
         }
     }
 }

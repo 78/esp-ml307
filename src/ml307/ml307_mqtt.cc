@@ -29,12 +29,12 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
                     auto topic = arguments[3].string_value;
                     if (arguments[4].int_value == arguments[5].int_value) {
                         if (on_message_callback_) {
-                            on_message_callback_(topic, at_uart_->DecodeHex(arguments[6].string_value));
+                            on_message_callback_(topic, std::move(at_uart_->DecodeHex(arguments[6].string_value)));
                         }
                     } else {
                         message_payload_.append(at_uart_->DecodeHex(arguments[6].string_value));
                         if (message_payload_.size() >= arguments[4].int_value && on_message_callback_) {
-                            on_message_callback_(topic, message_payload_);
+                            on_message_callback_(topic, std::move(message_payload_));
                             message_payload_.clear();
                         }
                     }
@@ -79,9 +79,13 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         return false;
     }
 
-    // Set keep alive
+    // Set keep alive and ping interval both to the same value
+    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"keepalive\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
+        ESP_LOGE(TAG, "Failed to set MQTT keepalive interval");
+        return false;
+    }
     if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
-        ESP_LOGE(TAG, "Failed to set MQTT keep alive");
+        ESP_LOGE(TAG, "Failed to set MQTT ping interval");
         return false;
     }
 
