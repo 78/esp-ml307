@@ -18,12 +18,12 @@ public:
     bool SetSleepMode(bool enable, int delay_seconds=0) override;
 
     // 实现基类的纯虚函数
-    Http* CreateHttp(int connect_id) override;
-    Tcp* CreateTcp(int connect_id) override;
-    Tcp* CreateSsl(int connect_id) override;
-    Udp* CreateUdp(int connect_id) override;
-    Mqtt* CreateMqtt(int connect_id) override;
-    WebSocket* CreateWebSocket(int connect_id) override;
+    std::unique_ptr<Http> CreateHttp(int connect_id) override;
+    std::unique_ptr<Tcp> CreateTcp(int connect_id) override;
+    std::unique_ptr<Tcp> CreateSsl(int connect_id) override;
+    std::unique_ptr<Udp> CreateUdp(int connect_id) override;
+    std::unique_ptr<Mqtt> CreateMqtt(int connect_id) override;
+    std::unique_ptr<WebSocket> CreateWebSocket(int connect_id) override;
 
 protected:
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) override;

@@ -104,6 +104,7 @@ private:
     bool headers_received_ = false;
     bool request_chunked_ = false;
     bool response_chunked_ = false;
+    bool connection_error_ = false;  // 新增：标记连接是否异常断开
     
     // HTTP 协议解析状态
     enum class ParseState {
@@ -137,6 +138,9 @@ private:
     // 新增：向读取队列添加数据的方法
     void AddBodyData(const std::string& data);
     void AddBodyData(std::string&& data);  // 移动版本
+    
+    // 新增：检查数据是否完整接收
+    bool IsDataComplete() const;
 };
 
 #endif

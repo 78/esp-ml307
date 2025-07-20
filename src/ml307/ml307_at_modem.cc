@@ -1,6 +1,7 @@
 #include "ml307_at_modem.h"
 #include <esp_log.h>
 #include <esp_err.h>
+#include <cassert>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -58,26 +59,32 @@ bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
     }
 }
 
-Http* Ml307AtModem::CreateHttp(int connect_id) {
-    return new HttpClient(this, connect_id);
+std::unique_ptr<Http> Ml307AtModem::CreateHttp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<HttpClient>(this, connect_id);
 }
 
-Tcp* Ml307AtModem::CreateTcp(int connect_id) {
-    return new Ml307Tcp(at_uart_, connect_id);
+std::unique_ptr<Tcp> Ml307AtModem::CreateTcp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ml307Tcp>(at_uart_, connect_id);
 }
 
-Tcp* Ml307AtModem::CreateSsl(int connect_id) {
-    return new Ml307Ssl(at_uart_, connect_id);
+std::unique_ptr<Tcp> Ml307AtModem::CreateSsl(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ml307Ssl>(at_uart_, connect_id);
 }
 
-Udp* Ml307AtModem::CreateUdp(int connect_id) {
-    return new Ml307Udp(at_uart_, connect_id);
+std::unique_ptr<Udp> Ml307AtModem::CreateUdp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ml307Udp>(at_uart_, connect_id);
 }
 
-Mqtt* Ml307AtModem::CreateMqtt(int connect_id) {
-    return new Ml307Mqtt(at_uart_, connect_id);
+std::unique_ptr<Mqtt> Ml307AtModem::CreateMqtt(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ml307Mqtt>(at_uart_, connect_id);
 }
 
-WebSocket* Ml307AtModem::CreateWebSocket(int connect_id) {
-    return new WebSocket(this, connect_id);
+std::unique_ptr<WebSocket> Ml307AtModem::CreateWebSocket(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<WebSocket>(this, connect_id);
 }

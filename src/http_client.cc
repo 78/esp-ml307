@@ -18,7 +18,6 @@ HttpClient::~HttpClient() {
     if (connected_) {
         Close();
     }
-    tcp_.reset();
     vEventGroupDelete(event_group_handle_);
 }
 
@@ -156,6 +155,7 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
     eof_ = false;
     headers_received_ = false;
     response_chunked_ = false;
+    connection_error_ = false;  // 重置连接错误状态
     parse_state_ = ParseState::STATUS_LINE;
     chunk_size_ = 0;
     chunk_received_ = 0;
@@ -174,9 +174,9 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
     
     // 建立 TCP 连接
     if (protocol_ == "https") {
-        tcp_.reset(network_->CreateSsl(connect_id_));
+        tcp_ = network_->CreateSsl(connect_id_);
     } else {
-        tcp_.reset(network_->CreateTcp(connect_id_));
+        tcp_ = network_->CreateTcp(connect_id_);
     }
     
     // 设置 TCP 数据接收回调
@@ -246,7 +246,18 @@ void HttpClient::OnTcpData(const std::string& data) {
 void HttpClient::OnTcpDisconnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
-    eof_ = true;
+    
+    // 检查数据是否完整接收
+    if (headers_received_ && !IsDataComplete()) {
+        // 如果已接收头部但数据不完整，标记为连接错误
+        connection_error_ = true;
+        ESP_LOGE(TAG, "Connection closed prematurely, expected %u bytes but only received %u bytes", 
+                 content_length_, total_body_received_);
+    } else {
+        // 数据完整或还未开始接收响应体，正常结束
+        eof_ = true;
+    }
+    
     cv_.notify_all();  // 通知所有等待的读取操作
 }
 
@@ -494,6 +505,11 @@ void HttpClient::SetError() {
 int HttpClient::Read(char* buffer, size_t buffer_size) {
     std::unique_lock<std::mutex> read_lock(read_mutex_);
     
+    // 如果连接异常断开，返回错误
+    if (connection_error_) {
+        return -1;
+    }
+    
     // 如果已经到达文件末尾且没有更多数据，返回0
     if (eof_ && body_chunks_.empty()) {
         return 0;
@@ -518,19 +534,27 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
         body_chunks_.pop_front();
     }
     
-    // 如果连接已断开且没有数据，返回0
+    // 如果连接已断开，检查是否有错误
     if (!connected_) {
-        return 0;
+        if (connection_error_) {
+            return -1;  // 连接异常断开
+        }
+        return 0;  // 正常结束
     }
     
     // 等待数据或连接关闭
     auto timeout = std::chrono::milliseconds(timeout_ms_);
     bool received = cv_.wait_for(read_lock, timeout, [this] { 
-        return !body_chunks_.empty() || eof_ || !connected_; 
+        return !body_chunks_.empty() || eof_ || !connected_ || connection_error_; 
     });
     
     if (!received) {
         ESP_LOGE(TAG, "Wait for HTTP content receive timeout");
+        return -1;
+    }
+    
+    // 再次检查连接错误状态
+    if (connection_error_) {
         return -1;
     }
     
@@ -640,14 +664,21 @@ void HttpClient::AddBodyData(std::string&& data) {
 std::string HttpClient::ReadAll() {
     std::unique_lock<std::mutex> lock(mutex_);
     
-    // 等待完成
+    // 等待完成或出错
     auto timeout = std::chrono::milliseconds(timeout_ms_);
     bool completed = cv_.wait_for(lock, timeout, [this] { 
-        return eof_; 
+        return eof_ || connection_error_; 
     });
     
     if (!completed) {
         ESP_LOGE(TAG, "Wait for HTTP content receive complete timeout");
+        return "";  // 超时返回空字符串
+    }
+    
+    // 如果连接异常断开，返回空字符串并记录错误
+    if (connection_error_) {
+        ESP_LOGE(TAG, "Cannot read all data: connection closed prematurely");
+        return "";
     }
     
     // 收集所有数据
@@ -658,4 +689,20 @@ std::string HttpClient::ReadAll() {
     }
     
     return result;
+}
+
+bool HttpClient::IsDataComplete() const {
+    // 对于chunked编码，如果parse_state_是COMPLETE，说明接收完整
+    if (response_chunked_) {
+        return parse_state_ == ParseState::COMPLETE;
+    }
+    
+    // 对于固定长度，检查是否接收了完整的content-length
+    if (content_length_ > 0) {
+        return total_body_received_ >= content_length_;
+    }
+    
+    // 如果没有content-length且不是chunked，当连接关闭时认为完整
+    // 这种情况通常用于HTTP/1.0或者content-length为0的响应
+    return true;
 }

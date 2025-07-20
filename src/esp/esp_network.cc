@@ -16,26 +16,26 @@ EspNetwork::~EspNetwork() {
 
 }
 
-Http* EspNetwork::CreateHttp(int connect_id) {
-    return new HttpClient(this, connect_id);
+std::unique_ptr<Http> EspNetwork::CreateHttp(int connect_id) {
+    return std::make_unique<HttpClient>(this, connect_id);
 }
 
-Tcp* EspNetwork::CreateTcp(int connect_id) {
-    return new EspTcp();
+std::unique_ptr<Tcp> EspNetwork::CreateTcp(int connect_id) {
+    return std::make_unique<EspTcp>();
 }
 
-Tcp* EspNetwork::CreateSsl(int connect_id) {
-    return new EspSsl();
+std::unique_ptr<Tcp> EspNetwork::CreateSsl(int connect_id) {
+    return std::make_unique<EspSsl>();
 }
 
-Udp* EspNetwork::CreateUdp(int connect_id) {
-    return new EspUdp();
+std::unique_ptr<Udp> EspNetwork::CreateUdp(int connect_id) {
+    return std::make_unique<EspUdp>();
 }
 
-Mqtt* EspNetwork::CreateMqtt(int connect_id) {
-    return new EspMqtt();
+std::unique_ptr<Mqtt> EspNetwork::CreateMqtt(int connect_id) {
+    return std::make_unique<EspMqtt>();
 }
 
-WebSocket* EspNetwork::CreateWebSocket(int connect_id) {
-    return new WebSocket(this, connect_id);
+std::unique_ptr<WebSocket> EspNetwork::CreateWebSocket(int connect_id) {
+    return std::make_unique<WebSocket>(this, connect_id);
 }

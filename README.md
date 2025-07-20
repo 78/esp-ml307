@@ -7,7 +7,7 @@
 
 - **自动模组检测**: 自动识别 ML307 和 EC801E 模组
 - **统一接口**: 通过 `NetworkInterface` 基类提供一致的API
-- **智能内存管理**: 使用 `shared_ptr<AtUart>` 确保内存安全
+- **智能内存管理**: 使用 `std::unique_ptr` 确保内存安全
 - **简化的API**: 更加直观和易用的接口设计
 
 ## 功能特性
@@ -74,7 +74,7 @@ void TestHttp(std::unique_ptr<AtModem>& modem) {
     ESP_LOGI(TAG, "开始 HTTP 测试");
 
     // 创建 HTTP 客户端
-    Http* http = modem->CreateHttp(0);
+    auto http = modem->CreateHttp(0);
     
     // 设置请求头
     http->SetHeader("User-Agent", "Xiaozhi/3.0.0");
@@ -94,7 +94,7 @@ void TestHttp(std::unique_ptr<AtModem>& modem) {
         ESP_LOGE(TAG, "HTTP 请求失败");
     }
     
-    delete http;
+    // unique_ptr 会自动释放内存，无需手动 delete
 }
 ```
 
@@ -105,7 +105,7 @@ void TestMqtt(std::unique_ptr<AtModem>& modem) {
     ESP_LOGI(TAG, "开始 MQTT 测试");
 
     // 创建 MQTT 客户端
-    Mqtt* mqtt = modem->CreateMqtt(0);
+    auto mqtt = modem->CreateMqtt(0);
     
     // 设置回调函数
     mqtt->OnConnected([]() {
@@ -136,7 +136,7 @@ void TestMqtt(std::unique_ptr<AtModem>& modem) {
         ESP_LOGE(TAG, "MQTT 连接失败");
     }
     
-    delete mqtt;
+    // unique_ptr 会自动释放内存，无需手动 delete
 }
 ```
 
@@ -147,7 +147,7 @@ void TestWebSocket(std::unique_ptr<AtModem>& modem) {
     ESP_LOGI(TAG, "开始 WebSocket 测试");
 
     // 创建 WebSocket 客户端
-    WebSocket* ws = modem->CreateWebSocket(0);
+    auto ws = modem->CreateWebSocket(0);
     
     // 设置请求头
     ws->SetHeader("Protocol-Version", "3");
@@ -183,7 +183,7 @@ void TestWebSocket(std::unique_ptr<AtModem>& modem) {
         ESP_LOGE(TAG, "WebSocket 连接失败");
     }
     
-    delete ws;
+    // unique_ptr 会自动释放内存，无需手动 delete
 }
 ```
 
@@ -194,7 +194,7 @@ void TestTcp(std::unique_ptr<AtModem>& modem) {
     ESP_LOGI(TAG, "开始 TCP 测试");
 
     // 创建 TCP 客户端
-    Tcp* tcp = modem->CreateTcp(0);
+    auto tcp = modem->CreateTcp(0);
     
     // 设置数据接收回调
     tcp->OnStream([](const std::string& data) {
@@ -220,7 +220,40 @@ void TestTcp(std::unique_ptr<AtModem>& modem) {
         ESP_LOGE(TAG, "TCP 连接失败");
     }
     
-    delete tcp;
+    // unique_ptr 会自动释放内存，无需手动 delete
+}
+```
+
+### UDP 客户端
+
+```cpp
+void TestUdp(std::unique_ptr<AtModem>& modem) {
+    ESP_LOGI(TAG, "开始 UDP 测试");
+
+    // 创建 UDP 客户端
+    auto udp = modem->CreateUdp(0);
+    
+    // 设置数据接收回调
+    udp->OnStream([](const std::string& data) {
+        ESP_LOGI(TAG, "UDP 接收数据: %s", data.c_str());
+    });
+    
+    // 连接到 UDP 服务器
+    if (udp->Connect("8.8.8.8", 53)) {
+        // 发送 DNS 查询包
+        std::string dns_query = "\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01";
+        int sent = udp->Send(dns_query);
+        ESP_LOGI(TAG, "UDP 发送了 %d 字节", sent);
+        
+        // 等待接收响应（通过回调处理）
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        
+        udp->Disconnect();
+    } else {
+        ESP_LOGE(TAG, "UDP 连接失败");
+    }
+    
+    // unique_ptr 会自动释放内存，无需手动 delete
 }
 ```
 
@@ -271,6 +304,30 @@ void MonitorNetwork(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
+### 提前释放网络对象
+
+```cpp
+void EarlyReleaseExample(std::unique_ptr<AtModem>& modem) {
+    // 创建 HTTP 客户端
+    auto http = modem->CreateHttp(0);
+    
+    // 使用完毕后提前释放
+    http->Close();
+    http.reset(); // 显式释放内存
+    
+    // 或者让 unique_ptr 在作用域结束时自动释放
+    {
+        auto tcp = modem->CreateTcp(0);
+        tcp->Connect("example.com", 80);
+        // 作用域结束时 tcp 自动释放
+    }
+    
+    // 此时 tcp 已经自动释放，可以创建新的连接
+    auto udp = modem->CreateUdp(0);
+    // ...
+}
+```
+
 ## 错误处理
 
 ```cpp
@@ -314,13 +371,13 @@ http.Open("GET", "https://example.com");
 ### 新版本 (v3.0)
 
 ```cpp
-// 新方式：自动检测模组类型
+// 新方式：自动检测模组类型，使用智能指针管理内存
 auto modem = AtModem::Detect(GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_15);
 NetworkStatus status = modem->WaitForNetworkReady();
 
-Http* http = modem->CreateHttp(0);
+auto http = modem->CreateHttp(0);
 http->Open("GET", "https://example.com");
-delete http;
+// 无需手动 delete，unique_ptr 自动管理内存
 ```
 
 ## 架构优势
@@ -330,16 +387,19 @@ delete http;
 3. **代码复用**: 避免重复实现相同功能
 4. **易于维护**: 公共逻辑集中管理
 5. **扩展性**: 便于添加新的模组类型支持
-6. **内存安全**: `shared_ptr<AtUart>` 提供自动内存管理
+6. **内存安全**: `std::unique_ptr` 提供自动内存管理，避免内存泄漏
 7. **线程安全**: 支持多线程安全访问
+8. **RAII 原则**: 资源获取即初始化，作用域结束时自动释放
 
 ## 注意事项
 
 1. 构造函数已变化，现在使用 `AtModem::Detect()` 方法
-2. 协议客户端需要通过 `CreateXxx()` 方法创建
-3. 记得在使用完协议客户端后调用 `delete` 释放内存
+2. 协议客户端需要通过 `CreateXxx()` 方法创建，返回 `std::unique_ptr`
+3. **无需手动 delete**，`std::unique_ptr` 会自动管理内存
 4. 网络状态通过回调函数异步通知
 5. `GetAtUart()` 返回 `shared_ptr<AtUart>`，支持安全共享
+6. 如果需要提前释放网络对象，可以调用 `.reset()` 方法
+7. 所有网络接口方法现在都有默认参数 `connect_id = -1`
 
 ## 作者
 

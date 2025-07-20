@@ -1,6 +1,7 @@
 #include "ec801e_at_modem.h"
 #include <esp_log.h>
 #include <esp_err.h>
+#include <cassert>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -37,26 +38,32 @@ bool Ec801EAtModem::SetSleepMode(bool enable, int delay_seconds) {
     }
 }
 
-Http* Ec801EAtModem::CreateHttp(int connect_id) {
-    return new HttpClient(this, connect_id);
+std::unique_ptr<Http> Ec801EAtModem::CreateHttp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<HttpClient>(this, connect_id);
 }
 
-Tcp* Ec801EAtModem::CreateTcp(int connect_id) {
-    return new Ec801ETcp(at_uart_, connect_id);
+std::unique_ptr<Tcp> Ec801EAtModem::CreateTcp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ec801ETcp>(at_uart_, connect_id);
 }
 
-Tcp* Ec801EAtModem::CreateSsl(int connect_id) {
-    return new Ec801ESsl(at_uart_, connect_id);
+std::unique_ptr<Tcp> Ec801EAtModem::CreateSsl(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ec801ESsl>(at_uart_, connect_id);
 }
 
-Udp* Ec801EAtModem::CreateUdp(int connect_id) {
-    return new Ec801EUdp(at_uart_, connect_id);
+std::unique_ptr<Udp> Ec801EAtModem::CreateUdp(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ec801EUdp>(at_uart_, connect_id);
 }
 
-Mqtt* Ec801EAtModem::CreateMqtt(int connect_id) {
-    return new Ec801EMqtt(at_uart_, connect_id);
+std::unique_ptr<Mqtt> Ec801EAtModem::CreateMqtt(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<Ec801EMqtt>(at_uart_, connect_id);
 }
 
-WebSocket* Ec801EAtModem::CreateWebSocket(int connect_id) {
-    return new WebSocket(this, connect_id);
+std::unique_ptr<WebSocket> Ec801EAtModem::CreateWebSocket(int connect_id) {
+    assert(connect_id >= 0);
+    return std::make_unique<WebSocket>(this, connect_id);
 }

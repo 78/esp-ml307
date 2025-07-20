@@ -124,9 +124,9 @@ bool WebSocket::Connect(const char* uri) {
     SetHeader("Sec-WebSocket-Key", base64_key.c_str());
 
     if (protocol == "wss" || protocol == "https") {
-        tcp_.reset(network_->CreateSsl(connect_id_));
+        tcp_ = network_->CreateSsl(connect_id_);
     } else {
-        tcp_.reset(network_->CreateTcp(connect_id_));
+        tcp_ = network_->CreateTcp(connect_id_);
     }
 
     connected_ = false;
