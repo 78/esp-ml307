@@ -12,7 +12,7 @@ public:
     virtual void Disconnect() = 0;
     virtual int Send(const std::string& data) = 0;
 
-    virtual void OnStream(std::function<void(std::string&& data)> callback) {
+    virtual void OnStream(std::function<void(const std::string& data)> callback) {
         stream_callback_ = callback;
     }
     
@@ -24,7 +24,7 @@ public:
     bool connected() const { return connected_; }
 
 protected:
-    std::function<void(std::string&& data)> stream_callback_;
+    std::function<void(const std::string& data)> stream_callback_;
     std::function<void()> disconnect_callback_;
     
     // 连接状态管理

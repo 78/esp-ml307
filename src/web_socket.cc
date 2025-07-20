@@ -277,7 +277,7 @@ void WebSocket::OnError(std::function<void(int)> callback) {
 
 void WebSocket::OnTcpData(const std::string& data) {
     // 将新数据追加到接收缓冲区
-    receive_buffer_ += data;
+    receive_buffer_.append(data);
     
     if (!handshake_completed_) {
         // 检查握手响应

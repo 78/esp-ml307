@@ -234,15 +234,15 @@ void TestUdp(std::unique_ptr<AtModem>& modem) {
     auto udp = modem->CreateUdp(0);
     
     // 设置数据接收回调
-    udp->OnStream([](const std::string& data) {
+    udp->OnMessage([](std::string&& data) {
         ESP_LOGI(TAG, "UDP 接收数据: %s", data.c_str());
     });
     
     // 连接到 UDP 服务器
     if (udp->Connect("8.8.8.8", 53)) {
-        // 发送 DNS 查询包
-        std::string dns_query = "\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01";
-        int sent = udp->Send(dns_query);
+        // 发送简单的测试数据
+        std::string test_data = "Hello UDP Server!";
+        int sent = udp->Send(test_data);
         ESP_LOGI(TAG, "UDP 发送了 %d 字节", sent);
         
         // 等待接收响应（通过回调处理）

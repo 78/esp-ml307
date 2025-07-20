@@ -29,12 +29,12 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
                     auto topic = arguments[3].string_value;
                     if (arguments[4].int_value == arguments[5].int_value) {
                         if (on_message_callback_) {
-                            on_message_callback_(topic, std::move(at_uart_->DecodeHex(arguments[6].string_value)));
+                            on_message_callback_(topic, at_uart_->DecodeHex(arguments[6].string_value));
                         }
                     } else {
                         message_payload_.append(at_uart_->DecodeHex(arguments[6].string_value));
                         if (message_payload_.size() >= arguments[4].int_value && on_message_callback_) {
-                            on_message_callback_(topic, std::move(message_payload_));
+                            on_message_callback_(topic, message_payload_);
                             message_payload_.clear();
                         }
                     }

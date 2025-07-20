@@ -118,8 +118,8 @@ int EspTcp::Send(const std::string& data) {
 }
 
 void EspTcp::ReceiveTask() {
+    std::string data;
     while (connected_) {
-        std::string data;
         data.resize(1500);
         int ret = recv(tcp_fd_, data.data(), data.size(), 0);
         if (ret <= 0) {
@@ -130,9 +130,10 @@ void EspTcp::ReceiveTask() {
             }
             break;
         }
-        data.resize(ret);
+
         if (stream_callback_) {
-            stream_callback_(std::move(data));
+            data.resize(ret);
+            stream_callback_(data);
         }
     }
 }

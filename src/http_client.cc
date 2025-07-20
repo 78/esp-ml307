@@ -229,8 +229,8 @@ void HttpClient::OnTcpData(const std::string& data) {
     // 检查 body_chunks_ 大小，如果超过8KB则阻塞
     {
         std::unique_lock<std::mutex> read_lock(read_mutex_);
-        write_cv_.wait(read_lock, [this, &data] {
-            size_t total_size = data.size();
+        write_cv_.wait(read_lock, [this, size=data.size()] {
+            size_t total_size = size;
             for (const auto& chunk : body_chunks_) {
                 total_size += chunk.data.size();
             }

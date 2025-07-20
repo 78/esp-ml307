@@ -96,8 +96,8 @@ int EspSsl::Send(const std::string& data) {
 }
 
 void EspSsl::ReceiveTask() {
+    std::string data;
     while (connected_) {
-        std::string data;
         data.resize(1500);
         int ret = esp_tls_conn_read(tls_client_, data.data(), data.size());
         if (ret == ESP_TLS_ERR_SSL_WANT_READ) {
@@ -119,9 +119,9 @@ void EspSsl::ReceiveTask() {
             break;
         }
         
-        data.resize(ret);
         if (stream_callback_) {
-            stream_callback_(std::move(data));
+            data.resize(ret);
+            stream_callback_(data);
         }
     }
 }
