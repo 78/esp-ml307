@@ -216,6 +216,7 @@ void HttpClient::Close() {
     }
     
     connected_ = false;
+    write_cv_.notify_all();
     tcp_->Disconnect();
     
     eof_ = true;
