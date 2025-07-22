@@ -138,7 +138,21 @@ bool AtUart::ParseResponse() {
 
     auto end_pos = rx_buffer_.find("\r\n");
     if (end_pos == std::string::npos) {
-        return false;
+        // FIXME: for +MHTTPURC: "ind", missing newline
+        if (rx_buffer_.size() >= 16 && memcmp(rx_buffer_.c_str(), "+MHTTPURC: \"ind\"", 16) == 0) {
+            // Find the end of this line and add \r\n if missing
+            auto next_plus = rx_buffer_.find("+", 1);
+            if (next_plus != std::string::npos) {
+                // Insert \r\n before the next + command
+                rx_buffer_.insert(next_plus, "\r\n");
+            } else {
+                // Append \r\n at the end
+                rx_buffer_.append("\r\n");
+            }
+            end_pos = rx_buffer_.find("\r\n");
+        } else {
+            return false;
+        }
     }
 
     // Ignore empty lines

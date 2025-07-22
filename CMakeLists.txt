@@ -12,6 +12,7 @@ idf_component_register(
         "src/ml307/ml307_ssl.cc"
         "src/ml307/ml307_mqtt.cc"
         "src/ml307/ml307_udp.cc"
+        "src/ml307/ml307_http.cc"
         "src/esp/esp_network.cc"
         "src/esp/esp_ssl.cc"
         "src/esp/esp_tcp.cc"

@@ -59,7 +59,6 @@ public:
 
     // 网络状态管理
     virtual void Reboot();
-    virtual void ResetConnections();
     virtual NetworkStatus WaitForNetworkReady(int timeout_ms = -1);
     virtual bool SetSleepMode(bool enable, int delay_seconds=0);
     virtual void SetFlightMode(bool enable);

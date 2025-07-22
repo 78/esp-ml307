@@ -14,7 +14,6 @@ public:
     ~Ml307AtModem() override = default;
 
     void Reboot() override;
-    void ResetConnections() override;
     bool SetSleepMode(bool enable, int delay_seconds=0) override;
 
     // 实现基类的纯虚函数

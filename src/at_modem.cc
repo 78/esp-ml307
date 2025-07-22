@@ -61,9 +61,6 @@ void AtModem::OnNetworkStateChanged(std::function<void(bool network_ready)> call
 void AtModem::Reboot() {
 }
 
-void AtModem::ResetConnections() {
-}
-
 void AtModem::SetFlightMode(bool enable) {
     if (enable) {
         at_uart_->SendCommand("AT+CFUN=4"); // flight mode
