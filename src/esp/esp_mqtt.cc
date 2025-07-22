@@ -62,12 +62,12 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
         auto payload = std::string(event->data, event->data_len);
         if (event->data_len == event->total_data_len) {
             if (on_message_callback_) {
-                on_message_callback_(topic, std::move(payload));
+                on_message_callback_(topic, payload);
             }
         } else {
             message_payload_.append(payload);
             if (message_payload_.size() >= event->total_data_len && on_message_callback_) {
-                on_message_callback_(topic, std::move(message_payload_));
+                on_message_callback_(topic, message_payload_);
                 message_payload_.clear();
             }
         }

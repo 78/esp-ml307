@@ -115,6 +115,13 @@ void Ec801ESsl::Disconnect() {
     }
     
     at_uart_->SendCommand("AT+QSSLCLOSE=" + std::to_string(ssl_id_));
+
+    if (connected_) {
+        connected_ = false;
+        if (disconnect_callback_) {
+            disconnect_callback_();
+        }
+    }
 }
 
 int Ec801ESsl::Send(const std::string& data) {

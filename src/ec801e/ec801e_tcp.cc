@@ -114,6 +114,13 @@ void Ec801ETcp::Disconnect() {
     if (at_uart_->SendCommand("AT+QICLOSE=" + std::to_string(tcp_id_))) {
         instance_active_ = false;
     }
+
+    if (connected_) {
+        connected_ = false;
+        if (disconnect_callback_) {
+            disconnect_callback_();
+        }
+    }
 }
 
 int Ec801ETcp::Send(const std::string& data) {

@@ -106,7 +106,7 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
     // 打开 TCP 连接
     command = "AT+MIPOPEN=" + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",,0";
     if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open TCP connection");
+        ESP_LOGE(TAG, "Failed to open TCP connection, error=%d", at_uart_->GetCmeErrorCode());
         return false;
     }
 

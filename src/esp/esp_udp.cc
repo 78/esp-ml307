@@ -53,7 +53,9 @@ void EspUdp::Disconnect() {
         close(udp_fd_);
         udp_fd_ = -1;
     }
+
     connected_ = false;
+    
     if (receive_thread_.joinable()) {
         receive_thread_.join();
     }
@@ -69,16 +71,17 @@ int EspUdp::Send(const std::string& data) {
 }
 
 void EspUdp::ReceiveTask() {
+    std::string data;
     while (true) {
-        std::string data;
         data.resize(1500);
         int ret = recv(udp_fd_, data.data(), data.size(), 0);
         if (ret <= 0) {
             break;
         }
-        data.resize(ret);
+        
         if (message_callback_) {
-            message_callback_(std::move(data));
+            data.resize(ret);
+            message_callback_(data);
         }
     }
 }

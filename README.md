@@ -234,7 +234,7 @@ void TestUdp(std::unique_ptr<AtModem>& modem) {
     auto udp = modem->CreateUdp(0);
     
     // 设置数据接收回调
-    udp->OnMessage([](std::string&& data) {
+    udp->OnMessage([](const std::string& data) {
         ESP_LOGI(TAG, "UDP 接收数据: %s", data.c_str());
     });
     

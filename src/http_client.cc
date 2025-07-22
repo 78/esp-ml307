@@ -348,8 +348,8 @@ void HttpClient::ProcessReceivedData() {
                 size_t available = std::min(rx_buffer_.size(), chunk_size_ - chunk_received_);
                 if (available > 0) {
                     std::string chunk_data = rx_buffer_.substr(0, available);
-                    AddBodyData(std::move(chunk_data));  // 使用移动语义，避免拷贝
-                    total_body_received_ += available;  // 累加接收的字节数
+                    AddBodyData(std::move(chunk_data));
+                    total_body_received_ += available;
                     rx_buffer_.erase(0, available);
                     chunk_received_ += available;
                     

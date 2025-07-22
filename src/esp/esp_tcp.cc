@@ -56,14 +56,11 @@ void EspTcp::Disconnect() {
         close(tcp_fd_);
         tcp_fd_ = -1;
     }
+
     connected_ = false;
+
     if (receive_thread_.joinable()) {
         receive_thread_.join();
-    }
-    
-    // 调用断连回调
-    if (disconnect_callback_) {
-        disconnect_callback_();
     }
 }
 

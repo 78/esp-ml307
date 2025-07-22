@@ -12,13 +12,13 @@ public:
     virtual void Disconnect() = 0;
     virtual int Send(const std::string& data) = 0;
 
-    virtual void OnMessage(std::function<void(std::string&& data)> callback) {
+    virtual void OnMessage(std::function<void(const std::string& data)> callback) {
         message_callback_ = std::move(callback);
     }
     bool connected() const { return connected_; }
 
 protected:
-    std::function<void(std::string&& data)> message_callback_;
+    std::function<void(const std::string& data)> message_callback_;
     bool connected_ = false;
 };
 
