@@ -9,7 +9,7 @@
 #include "ml307_ssl.h"
 #include "ml307_udp.h"
 #include "ml307_mqtt.h"
-#include "http_client.h"
+#include "ml307_http.h"
 #include "web_socket.h"
 
 #define TAG "Ml307AtModem"
@@ -17,6 +17,11 @@
 
 Ml307AtModem::Ml307AtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart) {
     // 子类特定的初始化在这里
+    // Reset HTTP instances
+    at_uart_->SendCommand("AT+MHTTPDEL=0");
+    at_uart_->SendCommand("AT+MHTTPDEL=1");
+    at_uart_->SendCommand("AT+MHTTPDEL=2");
+    at_uart_->SendCommand("AT+MHTTPDEL=3");
 }
 
 void Ml307AtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
@@ -40,14 +45,6 @@ void Ml307AtModem::Reboot() {
     at_uart_->SendCommand("AT+MREBOOT=0");
 }
 
-void Ml307AtModem::ResetConnections() {
-    // Reset HTTP instances
-    at_uart_->SendCommand("AT+MHTTPDEL=0");
-    at_uart_->SendCommand("AT+MHTTPDEL=1");
-    at_uart_->SendCommand("AT+MHTTPDEL=2");
-    at_uart_->SendCommand("AT+MHTTPDEL=3");
-}
-
 bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
     if (enable) {
         if (delay_seconds > 0) {
@@ -60,8 +57,7 @@ bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
 }
 
 std::unique_ptr<Http> Ml307AtModem::CreateHttp(int connect_id) {
-    assert(connect_id >= 0);
-    return std::make_unique<HttpClient>(this, connect_id);
+    return std::make_unique<Ml307Http>(at_uart_);
 }
 
 std::unique_ptr<Tcp> Ml307AtModem::CreateTcp(int connect_id) {
