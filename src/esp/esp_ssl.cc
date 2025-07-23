@@ -46,13 +46,13 @@ bool EspSsl::Connect(const std::string& host, int port) {
 void EspSsl::Disconnect() {
     connected_ = false;
     
-    if (receive_thread_.joinable()) {
-        receive_thread_.join();
-    }
-    
     if (tls_client_) {
         esp_tls_conn_destroy(tls_client_);
         tls_client_ = nullptr;
+    }
+    
+    if (receive_thread_.joinable()) {
+        receive_thread_.join();
     }
 }
 
