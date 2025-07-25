@@ -1,6 +1,6 @@
 # ML307 / Quectel-E Series Cat.1 AT Modem (v3.0)
 
-这是一个适用于 ML307R / EC801E Cat.1 模组的组件。
+这是一个适用于 ML307R / EC801E / NT26K LTE Cat.1 模组的组件。
 本项目最初为 https://github.com/78/xiaozhi-esp32 项目创建。
 
 ## 🆕 版本 3.0 新特性
@@ -24,8 +24,10 @@
 
 - ML307R
 - ML307A
-- EC801E
-- NT26K
+- EC801E \*
+- NT26K \*
+
+\* 需要在购买时咨询是否已烧录支持 SSL TCP 的固件
 
 ## 快速开始
 
