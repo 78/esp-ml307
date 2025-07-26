@@ -60,7 +60,7 @@ private:
     size_t body_offset_ = 0;
     size_t content_length_ = 0;
     bool eof_ = false;
-    bool connected_ = false;
+    bool instance_active_ = false;
     bool request_chunked_ = false;
     bool response_chunked_ = false;
 
