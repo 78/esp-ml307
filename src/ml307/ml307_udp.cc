@@ -128,12 +128,12 @@ int Ml307Udp::Send(const std::string& data) {
     const size_t MAX_PACKET_SIZE = 1460 / 2;
 
     if (!connected_) {
-        ESP_LOGE(TAG, "未连接");
+        ESP_LOGE(TAG, "Not connected");
         return -1;
     }
 
     if (data.size() > MAX_PACKET_SIZE) {
-        ESP_LOGE(TAG, "数据块超过最大限制");
+        ESP_LOGE(TAG, "Data chunk exceeds maximum limit");
         return -1;
     }
 
@@ -145,7 +145,7 @@ int Ml307Udp::Send(const std::string& data) {
     command += "\r\n";
     
     if (!at_uart_->SendCommand(command, 100, false)) {
-        ESP_LOGE(TAG, "发送数据块失败");
+        ESP_LOGE(TAG, "Failed to send data chunk");
         return -1;
     }
     return data.size();

@@ -18,6 +18,10 @@
 Ml307AtModem::Ml307AtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart) {
     // 子类特定的初始化在这里
     // Reset HTTP instances
+    ResetConnections();
+}
+
+void Ml307AtModem::ResetConnections() {
     at_uart_->SendCommand("AT+MHTTPDEL=0");
     at_uart_->SendCommand("AT+MHTTPDEL=1");
     at_uart_->SendCommand("AT+MHTTPDEL=2");

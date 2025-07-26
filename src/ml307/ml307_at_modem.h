@@ -26,6 +26,7 @@ public:
 
 protected:
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) override;
+    void ResetConnections();
 };
 
 

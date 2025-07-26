@@ -151,7 +151,7 @@ int Ml307Tcp::Send(const std::string& data) {
     size_t total_sent = 0;
 
     if (!connected_) {
-        ESP_LOGE(TAG, "未连接");
+        ESP_LOGE(TAG, "Not connected");
         return -1;
     }
 
@@ -175,14 +175,14 @@ int Ml307Tcp::Send(const std::string& data) {
         command += "\r\n";
         
         if (!at_uart_->SendCommand(command, 100, false)) {
-            ESP_LOGE(TAG, "发送数据块失败");
+            ESP_LOGE(TAG, "Failed to send data chunk");
             Disconnect();
             return -1;
         }
 
         auto bits = xEventGroupWaitBits(event_group_handle_, ML307_TCP_SEND_COMPLETE, pdTRUE, pdFALSE, pdMS_TO_TICKS(TCP_CONNECT_TIMEOUT_MS));
         if (!(bits & ML307_TCP_SEND_COMPLETE)) {
-            ESP_LOGE(TAG, "未收到发送确认");
+            ESP_LOGE(TAG, "No send confirmation received");
             return -1;
         }
 
