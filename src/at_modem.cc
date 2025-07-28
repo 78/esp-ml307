@@ -126,9 +126,7 @@ std::string AtModem::GetImei() {
     if (!imei_.empty()) {
         return imei_;
     }
-    if (at_uart_->SendCommand("AT+CGSN")) {
-        imei_ = at_uart_->GetResponse();
-    }
+    at_uart_->SendCommand("AT+CGSN=1");
     return imei_;
 }
 
@@ -163,7 +161,7 @@ CeregState AtModem::GetRegistrationState() {
 }
 
 void AtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
-    if (command == "GSN" && arguments.size() >= 1) {
+    if (command == "CGSN" && arguments.size() >= 1) {
         imei_ = arguments[0].string_value;
     } else if (command == "ICCID" && arguments.size() >= 1) {
         iccid_ = arguments[0].string_value;
