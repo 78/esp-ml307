@@ -14,6 +14,8 @@ public:
     void Disconnect() override;
     int Send(const std::string& data) override;
 
+    bool IsConnected() const { return connected_ && tls_client_ != nullptr; }
+
 private:
     esp_tls_t* tls_client_;
     std::thread receive_thread_;
