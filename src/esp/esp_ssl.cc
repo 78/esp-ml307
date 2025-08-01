@@ -122,7 +122,9 @@ void EspSsl::ReceiveTask() {
         }
 
         if (ret <= 0) {
-            ESP_LOGE(TAG, "SSL receive failed: %d", ret);
+            if (ret < 0) {
+                ESP_LOGE(TAG, "SSL receive failed: %d", ret);
+            }
             connected_ = false;
             // 接收失败或连接断开时调用断连回调
             if (disconnect_callback_) {

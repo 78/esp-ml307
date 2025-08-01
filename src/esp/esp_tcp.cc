@@ -116,6 +116,9 @@ void EspTcp::ReceiveTask() {
         data.resize(1500);
         int ret = recv(tcp_fd_, data.data(), data.size(), 0);
         if (ret <= 0) {
+            if (ret < 0) {
+                ESP_LOGE(TAG, "TCP receive failed: %d", ret);
+            }
             connected_ = false;
             // 接收失败或连接断开时调用断连回调
             if (disconnect_callback_) {
