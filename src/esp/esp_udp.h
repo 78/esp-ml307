@@ -5,7 +5,9 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
-#include <thread>
+#include <freertos/task.h>
+
+#define ESP_UDP_EVENT_RECEIVE_TASK_EXIT 1
 
 class EspUdp : public Udp {
 public:
@@ -18,7 +20,8 @@ public:
 
 private:
     int udp_fd_;
-    std::thread receive_thread_;
+    EventGroupHandle_t event_group_ = nullptr;
+    TaskHandle_t receive_task_handle_ = nullptr;
 
     void ReceiveTask();
 };

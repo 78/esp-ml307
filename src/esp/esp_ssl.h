@@ -3,7 +3,12 @@
 
 #include "tcp.h"
 #include <esp_tls.h>
-#include <thread>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
+#include <freertos/task.h>
+
+#define ESP_SSL_EVENT_RECEIVE_TASK_EXIT 1
 
 class EspSsl : public Tcp {
 public:
@@ -16,7 +21,8 @@ public:
 
 private:
     esp_tls_t* tls_client_ = nullptr;
-    std::thread receive_thread_;
+    EventGroupHandle_t event_group_ = nullptr;
+    TaskHandle_t receive_task_handle_ = nullptr;
 
     void ReceiveTask();
 };
