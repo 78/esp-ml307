@@ -5,7 +5,9 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
-#include <thread>
+#include <freertos/task.h>
+
+#define ESP_TCP_EVENT_RECEIVE_TASK_EXIT 1
 
 class EspTcp : public Tcp {
 public:
@@ -17,8 +19,9 @@ public:
     int Send(const std::string& data) override;
 
 private:
-    int tcp_fd_;
-    std::thread receive_thread_;
+    int tcp_fd_ = -1;
+    EventGroupHandle_t event_group_ = nullptr;
+    TaskHandle_t receive_task_handle_ = nullptr;
 
     void ReceiveTask();
 };
