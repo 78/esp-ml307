@@ -391,13 +391,28 @@ void HttpClient::ProcessReceivedData() {
         }
     }
 
-    // 检查是否完成（非 chunked 模式）
-    if (parse_state_ == ParseState::BODY && !response_chunked_ &&
-        content_length_ > 0 && total_body_received_ >= content_length_) {
+    // 增加额外的完成条件检查
+    if (parse_state_ == ParseState::BODY && !response_chunked_) {
+        // 如果已经接收了足够的数据，即使content_length不匹配也完成
+        if (content_length_ > 0 && total_body_received_ >= content_length_) {
+            parse_state_ = ParseState::COMPLETE;
+            eof_ = true;
+            xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
+            ESP_LOGD(TAG, "HTTP response body received: %u/%u bytes", total_body_received_, content_length_);
+        } else if (!connected_ && total_body_received_ > 0) { // 如果连接断开且接收了一些数据
+            ESP_LOGW(TAG, "Connection closed, but received %u bytes", total_body_received_);
+            parse_state_ = ParseState::COMPLETE;
+            eof_ = true;
+            xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
+        }
+    }
+
+    // 对于chunked传输，如果连接断开也标记完成
+    if (response_chunked_ && !connected_ && parse_state_ != ParseState::COMPLETE) {
+        ESP_LOGW(TAG, "Connection closed during chunked transfer");
         parse_state_ = ParseState::COMPLETE;
         eof_ = true;
         xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
-        ESP_LOGD(TAG, "HTTP response body received: %u/%u bytes", total_body_received_, content_length_);
     }
 }
 
@@ -639,7 +654,7 @@ std::string HttpClient::GetResponseHeader(const std::string& key) const {
     // 转换为小写进行查找
     std::string lower_key = key;
     std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
-    
+
     auto it = response_headers_.find(lower_key);
     if (it != response_headers_.end()) {
         return it->second.value;
@@ -718,7 +733,12 @@ bool HttpClient::IsDataComplete() const {
         return total_body_received_ >= content_length_;
     }
 
+    // 特殊情况：如果头部已接收但没有content-length且连接已断开
+    if (headers_received_ && !connected_ && content_length_ == 0) {
+        // 检查是否已经接收了一些数据
+        return total_body_received_ > 0 || parse_state_ == ParseState::BODY;
+    }
+
     // 如果没有content-length且不是chunked，当连接关闭时认为完整
-    // 这种情况通常用于HTTP/1.0或者content-length为0的响应
-    return true;
+    return !connected_ && headers_received_;
 }
