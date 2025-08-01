@@ -26,7 +26,10 @@ void HttpClient::SetTimeout(int timeout_ms) {
 }
 
 void HttpClient::SetHeader(const std::string& key, const std::string& value) {
-    headers_[key] = value;
+    // 转换key为小写用于存储和查找，但保留原始key用于输出
+    std::string lower_key = key;
+    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
+    headers_[lower_key] = HeaderEntry(key, value);
 }
 
 void HttpClient::SetContent(std::string&& content) {
@@ -107,16 +110,18 @@ std::string HttpClient::BuildHttpRequest() {
     }
     request << "\r\n";
 
-    // 用户自定义头部
-    for (const auto& [key, value] : headers_) {
-        request << key << ": " << value << "\r\n";
+    // 用户自定义头部（使用原始key输出）
+    for (const auto& [lower_key, header_entry] : headers_) {
+        request << header_entry.original_key << ": " << header_entry.value << "\r\n";
     }
 
-    // 内容相关头部
+    // 内容相关头部（仅在用户未设置时添加）
+    bool user_set_content_length = headers_.find("content-length") != headers_.end();
+    bool user_set_transfer_encoding = headers_.find("transfer-encoding") != headers_.end();
     bool has_content = content_.has_value() && !content_->empty();
-    if (has_content) {
+    if (has_content && !user_set_content_length) {
         request << "Content-Length: " << content_->size() << "\r\n";
-    } else if (method_ == "POST" || method_ == "PUT") {
+    } else if ((method_ == "POST" || method_ == "PUT") && !user_set_content_length && !user_set_transfer_encoding) {
         if (request_chunked_) {
             request << "Transfer-Encoding: chunked\r\n";
         } else {
@@ -124,11 +129,14 @@ std::string HttpClient::BuildHttpRequest() {
         }
     }
 
-    // 连接控制
-    request << "Connection: close\r\n";
+    // 连接控制（仅在用户未设置时添加）
+    if (headers_.find("connection") == headers_.end()) {
+        request << "Connection: close\r\n";
+    }
 
     // 结束头部
     request << "\r\n";
+    ESP_LOGD(TAG, "HTTP request headers:\n%s", request.str().c_str());
 
     // 请求体
     if (has_content) {
@@ -194,6 +202,7 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
     }
 
     connected_ = true;
+    request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
 
     // 构建并发送 HTTP 请求
     std::string http_request = BuildHttpRequest();
@@ -203,9 +212,6 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
         connected_ = false;
         return false;
     }
-
-    // 判断是否为 chunked 模式
-    request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
 
     return true;
 }
@@ -291,7 +297,7 @@ void HttpClient::ProcessReceivedData() {
                     // 检查是否为 chunked 编码
                     auto it = response_headers_.find("transfer-encoding");
                     if (it != response_headers_.end() &&
-                        it->second.find("chunked") != std::string::npos) {
+                        it->second.value.find("chunked") != std::string::npos) {
                         response_chunked_ = true;
                         parse_state_ = ParseState::CHUNK_SIZE;
                     } else {
@@ -299,11 +305,11 @@ void HttpClient::ProcessReceivedData() {
                         auto cl_it = response_headers_.find("content-length");
                         if (cl_it != response_headers_.end()) {
                             char* endptr;
-                            unsigned long length = strtoul(cl_it->second.c_str(), &endptr, 10);
-                            if (endptr != cl_it->second.c_str() && *endptr == '\0') {
+                            unsigned long length = strtoul(cl_it->second.value.c_str(), &endptr, 10);
+                            if (endptr != cl_it->second.value.c_str() && *endptr == '\0') {
                                 content_length_ = static_cast<size_t>(length);
                             } else {
-                                ESP_LOGE(TAG, "Invalid Content-Length: %s", cl_it->second.c_str());
+                                ESP_LOGE(TAG, "Invalid Content-Length: %s", cl_it->second.value.c_str());
                                 content_length_ = 0;
                             }
                         }
@@ -437,10 +443,11 @@ bool HttpClient::ParseHeaderLine(const std::string& line) {
     value.erase(0, value.find_first_not_of(" \t"));
     value.erase(value.find_last_not_of(" \t\r\n") + 1);
 
-    // 统一转换为小写键名，以支持大小写不敏感查找
-    std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+    // 转换为小写键名用于存储和查找，同时保存原始key
+    std::string lower_key = key;
+    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
 
-    response_headers_[key] = value;
+    response_headers_[lower_key] = HeaderEntry(key, value);
 
     return true;
 }
@@ -629,9 +636,13 @@ int HttpClient::GetStatusCode() {
 }
 
 std::string HttpClient::GetResponseHeader(const std::string& key) const {
-    auto it = response_headers_.find(key);
+    // 转换为小写进行查找
+    std::string lower_key = key;
+    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
+    
+    auto it = response_headers_.find(lower_key);
     if (it != response_headers_.end()) {
-        return it->second;
+        return it->second.value;
     }
     return "";
 }

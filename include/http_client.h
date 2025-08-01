@@ -69,6 +69,16 @@ private:
         }
     };
 
+    // 头部条目结构体，用于高效存储和查找
+    struct HeaderEntry {
+        std::string original_key;  // 保留原始大小写的key（用于输出HTTP头部）
+        std::string value;         // 头部值
+        
+        HeaderEntry() = default;
+        HeaderEntry(const std::string& key, const std::string& val) 
+            : original_key(key), value(val) {}
+    };
+
     NetworkInterface* network_;
     int connect_id_;
     std::unique_ptr<Tcp> tcp_;
@@ -85,7 +95,7 @@ private:
     int status_code_ = -1;
     int timeout_ms_ = 30000;
     std::string rx_buffer_;
-    std::map<std::string, std::string> headers_;
+    std::map<std::string, HeaderEntry> headers_;  // key为小写，用于快速查找
     std::string url_;
     std::string method_;
     std::string protocol_;
@@ -93,7 +103,7 @@ private:
     std::string path_;
     int port_ = 80;
     std::optional<std::string> content_ = std::nullopt;
-    std::map<std::string, std::string> response_headers_;
+    std::map<std::string, HeaderEntry> response_headers_;  // key为小写，用于快速查找
     
     // 移除原来的 body_ 变量，现在使用 body_chunks_ 队列
     size_t body_offset_ = 0;

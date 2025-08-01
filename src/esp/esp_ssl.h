@@ -15,7 +15,7 @@ public:
     int Send(const std::string& data) override;
 
 private:
-    esp_tls_t* tls_client_;
+    esp_tls_t* tls_client_ = nullptr;
     std::thread receive_thread_;
 
     void ReceiveTask();

@@ -8,7 +8,6 @@
 static const char *TAG = "EspSsl";
 
 EspSsl::EspSsl() {
-    tls_client_ = esp_tls_init();
 }
 
 EspSsl::~EspSsl() {
@@ -21,7 +20,7 @@ bool EspSsl::Connect(const std::string& host, int port) {
         Disconnect();
     }
     
-    if (!tls_client_) {
+    if (tls_client_ == nullptr) {
         tls_client_ = esp_tls_init();
         if (!tls_client_) {
             ESP_LOGE(TAG, "Failed to initialize TLS");
@@ -46,13 +45,22 @@ bool EspSsl::Connect(const std::string& host, int port) {
 void EspSsl::Disconnect() {
     connected_ = false;
     
-    if (tls_client_) {
-        esp_tls_conn_destroy(tls_client_);
-        tls_client_ = nullptr;
+    // Close socket if it is open
+    if (tls_client_ != nullptr) {
+        int sockfd;
+        ESP_ERROR_CHECK(esp_tls_get_conn_sockfd(tls_client_, &sockfd));
+        if (sockfd >= 0) {
+            close(sockfd);
+        }
     }
     
     if (receive_thread_.joinable()) {
         receive_thread_.join();
+    }
+    
+    if (tls_client_ != nullptr) {
+        esp_tls_conn_destroy(tls_client_);
+        tls_client_ = nullptr;
     }
 }
 
