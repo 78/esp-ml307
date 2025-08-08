@@ -88,8 +88,7 @@ int EspUdp::Send(const std::string& data) {
 
     int ret = send(udp_fd_, data.data(), data.size(), 0);
     if (ret <= 0) {
-        ESP_LOGE(TAG, "Send failed: ret=%d", ret);
-        connected_ = false;
+        ESP_LOGE(TAG, "Send failed: ret=%d, errno=%d", ret, errno);
     }
     return ret;
 }
