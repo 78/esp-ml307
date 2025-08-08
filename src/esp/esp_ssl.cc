@@ -96,13 +96,8 @@ int EspSsl::Send(const std::string& data) {
         }
 
         if (ret <= 0) {
-            ESP_LOGE(TAG, "SSL send failed: %d", ret);
-            // 其他错误，认为连接失败
-            connected_ = false;
-            if (disconnect_callback_) {
-                disconnect_callback_();
-            }
-            return total_sent;
+            ESP_LOGE(TAG, "SSL send failed: ret=%d, errno=%d", ret, errno);
+            return ret;
         }
         
         total_sent += ret;

@@ -96,12 +96,7 @@ int EspTcp::Send(const std::string& data) {
         
         if (ret <= 0) {
             ESP_LOGE(TAG, "Send failed: ret=%d, errno=%d", ret, errno);
-            // 其他错误，认为连接失败
-            connected_ = false;
-            if (disconnect_callback_) {
-                disconnect_callback_();
-            }
-            return total_sent;
+            return ret;
         }
         
         total_sent += ret;
