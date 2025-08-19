@@ -29,8 +29,13 @@ void Ml307AtModem::ResetConnections() {
 }
 
 void Ml307AtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
+    // Handle Common URC
+    AtModem::HandleUrc(command, arguments);
+    // Handle ML307 URC
     if (command == "MIPCALL" && arguments.size() >= 3) {
         if (arguments[1].int_value == 1) {
+            auto ip = arguments[2].string_value;
+            ESP_LOGI(TAG, "PDP Context %d IP: %s", arguments[0].int_value, ip.c_str());
             network_ready_ = true;
             xEventGroupSetBits(event_group_handle_, AT_EVENT_NETWORK_READY);
         }
@@ -42,7 +47,6 @@ void Ml307AtModem::HandleUrc(const std::string& command, const std::vector<AtArg
             }
         }
     }
-    AtModem::HandleUrc(command, arguments);
 }
 
 void Ml307AtModem::Reboot() {
@@ -58,6 +62,24 @@ bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
     } else {
         return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",0,0");
     }
+}
+
+NetworkStatus Ml307AtModem::WaitForNetworkReady(int timeout_ms) {
+    NetworkStatus status = AtModem::WaitForNetworkReady(timeout_ms);
+    if (status == NetworkStatus::Ready) {
+        // Wait for IP address, maximum total wait time is 4270ms
+        int delay_ms = 10;
+        for (int i = 0; i < 10; i++) {
+            at_uart_->SendCommand("AT+MIPCALL?");
+            auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_NETWORK_READY, pdFALSE, pdTRUE, pdMS_TO_TICKS(delay_ms));
+            if (bits & AT_EVENT_NETWORK_READY) {
+                return NetworkStatus::Ready;
+            }
+            delay_ms = std::min(delay_ms * 2, 1000);
+        }
+        ESP_LOGE(TAG, "Network ready but no IP address");
+    }
+    return status;
 }
 
 std::unique_ptr<Http> Ml307AtModem::CreateHttp(int connect_id) {
