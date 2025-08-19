@@ -24,6 +24,7 @@ Ec801EAtModem::Ec801EAtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart)
 }
 
 void Ec801EAtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
+    // Handle Common URC
     AtModem::HandleUrc(command, arguments);
 }
 

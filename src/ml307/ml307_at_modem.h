@@ -15,6 +15,7 @@ public:
 
     void Reboot() override;
     bool SetSleepMode(bool enable, int delay_seconds=0) override;
+    NetworkStatus WaitForNetworkReady(int timeout_ms=-1) override;
 
     // 实现基类的纯虚函数
     std::unique_ptr<Http> CreateHttp(int connect_id) override;
