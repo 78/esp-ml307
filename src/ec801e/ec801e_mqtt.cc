@@ -43,6 +43,14 @@ Ec801EMqtt::Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(
                     xEventGroupSetBits(event_group_handle_, EC801E_MQTT_OPEN_FAILED);
                 }
             }
+        } else if (command == "QMTDISC" && arguments.size() == 2) {
+            if (arguments[0].int_value == mqtt_id_) {
+                if (arguments[1].int_value == 0) {
+                    xEventGroupSetBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT);
+                } else {
+                    ESP_LOGE(TAG, "Failed to disconnect from MQTT broker");
+                }
+            }
         }
     });
 }
@@ -116,9 +124,11 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
         const char* message = error_code_ < 6 ? error_code_str[error_code_] : "未知错误";
         ESP_LOGE(TAG, "Failed to open MQTT connection: %s", message);
 
-        if (error_code_ != 2) {
-            return false;
+        if (error_code_ == 2) { // MQTT 标识符被占用
+            connected_ = true;
+            return Connect(broker_address, broker_port, client_id, username, password);
         }
+        return false;
     } else if (!(bits & EC801E_MQTT_OPEN_COMPLETE)) {
         ESP_LOGE(TAG, "MQTT connection timeout");
         return false;
@@ -173,10 +183,7 @@ bool Ec801EMqtt::Publish(const std::string topic, const std::string payload, int
     // If payload size is larger than 64KB, a CME ERROR 601 will be returned.
     std::string command = "AT+QMTPUBEX=" + std::to_string(mqtt_id_) + ",0,0,0,\"" + topic + "\",";
     command += std::to_string(payload.size());
-    if (!at_uart_->SendCommand(command)) {
-        return false;
-    }
-    if (!at_uart_->SendData(payload.data(), payload.size())) {
+    if (!at_uart_->SendCommandWithData(command, 1000, true, payload.data(), payload.size())) {
         return false;
     }
     return true;

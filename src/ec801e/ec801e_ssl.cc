@@ -138,14 +138,8 @@ int Ec801ESsl::Send(const std::string& data) {
         
         std::string command = "AT+QSSLSEND=" + std::to_string(ssl_id_) + "," + std::to_string(chunk_size);
         
-        if (!at_uart_->SendCommand(command)) {
+        if (!at_uart_->SendCommandWithData(command, 1000, true, data.data() + total_sent, chunk_size)) {
             ESP_LOGE(TAG, "Send command failed");
-            Disconnect();
-            return -1;
-        }
-        
-        if (!at_uart_->SendData(data.data() + total_sent, chunk_size)) {
-            ESP_LOGE(TAG, "Send data block failed");
             Disconnect();
             return -1;
         }

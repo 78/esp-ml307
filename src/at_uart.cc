@@ -293,10 +293,10 @@ bool AtUart::SendData(const char* data, size_t length) {
     return true;
 }
 
-bool AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add_crlf) {
+bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, bool add_crlf, const char* data, size_t data_length) {
+    std::lock_guard<std::mutex> lock(command_mutex_);
     ESP_LOGD(TAG, ">> %.64s (%u bytes)", command.data(), command.length());
 
-    std::lock_guard<std::mutex> lock(command_mutex_);
     xEventGroupClearBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR);
     wait_for_response_ = true;
     cme_error_code_ = 0;
@@ -314,11 +314,29 @@ bool AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add
     if (timeout_ms > 0) {
         auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
         wait_for_response_ = false;
-        return bits & AT_EVENT_COMMAND_DONE;
+        if (!(bits & AT_EVENT_COMMAND_DONE)) {
+            return false;
+        }
     } else {
         wait_for_response_ = false;
     }
+
+    if (data && data_length > 0) {
+        wait_for_response_ = true;
+        if (!SendData(data, data_length)) {
+            return false;
+        }
+        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+        wait_for_response_ = false;
+        if (!(bits & AT_EVENT_COMMAND_DONE)) {
+            return false;
+        }
+    }
     return true;
+}
+
+bool AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add_crlf) {
+    return SendCommandWithData(command, timeout_ms, add_crlf, nullptr, 0);
 }
 
 std::list<UrcCallback>::iterator AtUart::RegisterUrcCallback(UrcCallback callback) {

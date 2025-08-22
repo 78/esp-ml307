@@ -62,8 +62,8 @@ public:
     int GetBaudRate() const { return baud_rate_; }
     
     // 数据发送
-    bool SendData(const char* data, size_t length);
     bool SendCommand(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true);
+    bool SendCommandWithData(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true, const char* data = nullptr, size_t data_length = 0);
     const std::string& GetResponse() const { return response_; }
     int GetCmeErrorCode() const { return cme_error_code_; }
     
@@ -114,6 +114,7 @@ private:
     void HandleCommand(const char* command);
     // 处理 URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
+    bool SendData(const char* data, size_t length);
 
     // 静态任务函数
     static void EventTaskWrapper(void* arg);

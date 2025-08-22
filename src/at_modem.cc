@@ -21,7 +21,7 @@ std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, g
     
     // 发送AT+CGMR（或ATI）命令获取模组型号
     if (!uart->SendCommand("AT+CGMR", 3000)) {
-        ESP_LOGE(TAG, "Failed to send AT+CGMM command");
+        ESP_LOGE(TAG, "Failed to send AT+CGMR command");
         return nullptr;
     }
     
