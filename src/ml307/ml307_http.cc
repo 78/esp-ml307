@@ -329,18 +329,18 @@ void Ml307Http::Close() {
 
 std::string Ml307Http::ErrorCodeToString(int error_code) {
     switch (error_code) {
-        case 1: return "域名解析失败";
-        case 2: return "连接服务器失败";
-        case 3: return "连接服务器超时";
-        case 4: return "SSL握手失败";
-        case 5: return "连接异常断开";
-        case 6: return "请求响应超时";
-        case 7: return "接收数据解析失败";
-        case 8: return "缓存空间不足";
-        case 9: return "数据丢包";
-        case 10: return "写文件失败";
-        case 255: return "未知错误";
-        default: return "未定义错误";
+        case 1: return "Domain name resolution failed";
+        case 2: return "Connection to server failed";
+        case 3: return "Connection to server timeout";
+        case 4: return "SSL handshake failed";
+        case 5: return "Connection abnormal disconnection";
+        case 6: return "Request response timeout";
+        case 7: return "Data reception parsing failed";
+        case 8: return "Cache space insufficient";
+        case 9: return "Data packet loss";
+        case 10: return "File write failed";
+        case 255: return "Unknown error";
+        default: return "Undefined error";
     }
 }
 

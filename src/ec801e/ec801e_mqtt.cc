@@ -14,15 +14,34 @@ Ec801EMqtt::Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(
                     on_message_callback_(topic, at_uart_->DecodeHex(arguments[3].string_value));
                 }
             }
-        } else if (command == "QMTSTAT" && arguments.size() == 1) {
+        } else if (command == "QMTSTAT" && arguments.size() == 2) {
             if (arguments[0].int_value == mqtt_id_) {
-                ESP_LOGI(TAG, "MQTT connection state: %s", ErrorToString(arguments[1].int_value).c_str());
+                auto error_code = arguments[1].int_value;
+                if (error_code != 0) {
+                    auto error_message = ErrorToString(error_code);
+                    ESP_LOGE(TAG, "MQTT error occurred: %s", error_message.c_str());
+                    if (on_error_callback_) {
+                        on_error_callback_(error_message);
+                    }
+                    if (connected_) {
+                        connected_ = false;
+                        if (on_disconnected_callback_) {
+                            on_disconnected_callback_();
+                        }
+                    }
+                    xEventGroupSetBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT);
+                }
             }
         } else if (command == "QMTCONN" && arguments.size() == 3) {
             if (arguments[0].int_value == mqtt_id_) {
                 error_code_ = arguments[2].int_value;
                 if (error_code_ == 0) {
-                    connected_ = true;
+                    if (!connected_) {
+                        connected_ = true;
+                        if (on_connected_callback_) {
+                            on_connected_callback_();
+                        }
+                    }
                     xEventGroupSetBits(event_group_handle_, EC801E_MQTT_CONNECTED_EVENT);
                 } else {
                     if (connected_) {
@@ -62,15 +81,6 @@ Ec801EMqtt::~Ec801EMqtt() {
 
 bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
     EventBits_t bits;
-    if (IsConnected()) {
-        // 断开之前的连接
-        Disconnect();
-        bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
-        if (!(bits & EC801E_MQTT_DISCONNECTED_EVENT)) {
-            ESP_LOGE(TAG, "Failed to disconnect from previous connection");
-            return false;
-        }
-    }
 
     if (broker_port == 8883) {
         // Config SSL Context
@@ -105,6 +115,7 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
         return false;
     }
 
+    xEventGroupClearBits(event_group_handle_, EC801E_MQTT_OPEN_COMPLETE | EC801E_MQTT_OPEN_FAILED);
     std::string command = "AT+QMTOPEN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port);
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to open MQTT connection");
@@ -114,18 +125,23 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
     bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_OPEN_COMPLETE | EC801E_MQTT_OPEN_FAILED, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
     if (bits & EC801E_MQTT_OPEN_FAILED) {
         const char* error_code_str[] = {
-            "打开网络成功",
-            "参数错误",
-            "MQTT 标识符被占用",
-            "激活 PDP 失败",
-            "域名解析失败",
-            "网络断开导致错误"
+            "Connected",
+            "Parameter error",
+            "MQTT identifier occupied",
+            "PDP activation failed",
+            "Domain name resolution failed",
+            "Server disconnected"
         };
-        const char* message = error_code_ < 6 ? error_code_str[error_code_] : "未知错误";
+        const char* message = error_code_ < 6 ? error_code_str[error_code_] : "Unknown error";
         ESP_LOGE(TAG, "Failed to open MQTT connection: %s", message);
 
         if (error_code_ == 2) { // MQTT 标识符被占用
-            connected_ = true;
+            at_uart_->SendCommand(std::string("AT+QMTDISC=") + std::to_string(mqtt_id_));
+            bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
+            if (!(bits & EC801E_MQTT_DISCONNECTED_EVENT)) {
+                ESP_LOGE(TAG, "Failed to disconnect from previous connection");
+                return false;
+            }
             return Connect(broker_address, broker_port, client_id, username, password);
         }
         return false;
@@ -134,6 +150,7 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
         return false;
     }
 
+    xEventGroupClearBits(event_group_handle_, EC801E_MQTT_CONNECTED_EVENT | EC801E_MQTT_DISCONNECTED_EVENT);
     command = "AT+QMTCONN=" + std::to_string(mqtt_id_) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to connect to MQTT broker");
@@ -144,23 +161,19 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
     bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_CONNECTED_EVENT | EC801E_MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
     if (bits & EC801E_MQTT_DISCONNECTED_EVENT) {
         const char* error_code_str[] = {
-            "接受连接",
-            "拒绝连接：不接受的协议版本",
-            "拒绝连接：标识符被拒绝",
-            "拒绝连接：服务器不可用",
-            "拒绝连接：错误的用户名或密码",
-            "拒绝连接：未授权"
+            "Accepted",
+            "Rejected: Unacceptable protocol version",
+            "Rejected: Identifier rejected",
+            "Rejected: Server unavailable",
+            "Rejected: Wrong username or password",
+            "Rejected: Unauthorized"
         };
-        const char* message = error_code_ < 6 ? error_code_str[error_code_] : "未知错误";
+        const char* message = error_code_ < 6 ? error_code_str[error_code_] : "Unknown error";
         ESP_LOGE(TAG, "Failed to connect to MQTT broker: %s", message);
         return false;
     } else if (!(bits & EC801E_MQTT_CONNECTED_EVENT)) {
         ESP_LOGE(TAG, "MQTT connection timeout");
         return false;
-    }
-
-    if (on_connected_callback_) {
-        on_connected_callback_();
     }
     return true;
 }
@@ -208,24 +221,24 @@ bool Ec801EMqtt::Unsubscribe(const std::string topic) {
 std::string Ec801EMqtt::ErrorToString(int error_code) {
     switch (error_code) {
         case 0:
-            return "连接成功";
+            return "Connected";
         case 1:
-            return "连接被服务器断开或者重置";
+            return "Server disconnected or reset";
         case 2:
-            return "发送 PINGREQ 包超时或者失败";
+            return "Ping timeout or failed";
         case 3:
-            return "发送 CONNECT 包超时或者失败";
+            return "Connect timeout or failed";
         case 4:
-            return "接收 CONNACK 包超时或者失败";
+            return "Receive CONNACK timeout or failed";
         case 5:
-            return "客户端向服务器发送 DISCONNECT 包，但是服务器主动断开 MQTT 连接";
+            return "Client sends DISCONNECT packet, but server actively disconnects MQTT connection";
         case 6:
-            return "因为发送数据包总是失败，客户端主动断开 MQTT 连接";
+            return "Client actively disconnects MQTT connection because sending data packets always fails";
         case 7:
-            return "链路不工作或者服务器不可用";
+            return "Link does not work or server is unavailable";
         case 8:
-            return "客户端主动断开 MQTT 连接";
+            return "Client actively disconnects MQTT connection";
         default:
-            return "未知错误";
+            return "Unknown error";
     }
 }

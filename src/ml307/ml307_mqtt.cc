@@ -11,8 +11,14 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
             if (arguments[1].int_value == mqtt_id_) {
                 auto type = arguments[0].string_value;
                 if (type == "conn") {
-                    if (arguments[2].int_value == 0) {
-                        connected_ = true;
+                    int error_code = arguments[2].int_value;
+                    if (error_code == 0) {
+                        if (!connected_) {
+                            connected_ = true;
+                            if (on_connected_callback_) {
+                                on_connected_callback_();
+                            }
+                        }
                         xEventGroupSetBits(event_group_handle_, MQTT_CONNECTED_EVENT);
                     } else {
                         if (connected_) {
@@ -23,7 +29,13 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
                         }
                         xEventGroupSetBits(event_group_handle_, MQTT_DISCONNECTED_EVENT);
                     }
-                    ESP_LOGI(TAG, "MQTT connection state: %s", ErrorToString(arguments[2].int_value).c_str());
+                    if (error_code == 5 || error_code == 6) {
+                        auto error_message = ErrorToString(error_code);
+                        ESP_LOGW(TAG, "MQTT error occurred: %s", error_message.c_str());
+                        if (on_error_callback_) {
+                            on_error_callback_(error_message);
+                        }
+                    }
                 } else if (type == "suback") {
                 } else if (type == "publish" && arguments.size() >= 7) {
                     auto topic = arguments[3].string_value;
@@ -95,6 +107,7 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         return false;
     }
 
+    xEventGroupClearBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT);
     // 创建MQTT连接
     std::string command = "AT+MQTTCONN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
     if (!at_uart_->SendCommand(command)) {
@@ -107,10 +120,6 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
     if (!(bits & MQTT_CONNECTED_EVENT)) {
         ESP_LOGE(TAG, "Failed to connect to MQTT broker");
         return false;
-    }
-
-    if (on_connected_callback_) {
-        on_connected_callback_();
     }
     return true;
 }
@@ -166,22 +175,22 @@ bool Ml307Mqtt::Unsubscribe(const std::string topic) {
 std::string Ml307Mqtt::ErrorToString(int error_code) {
     switch (error_code) {
         case 0:
-            return "连接成功";
+            return "Connected";
         case 1:
-            return "正在重连";
+            return "Reconnecting";
         case 2:
-            return "断开：用户主动断开";
+            return "Disconnected: User initiated";
         case 3:
-            return "断开：拒绝连接（协议版本、标识符、用户名或密码错误）";
+            return "Disconnected: Rejected (protocol version, identifier, username or password error)";
         case 4:
-            return "断开：服务器断开";
+            return "Disconnected: Server disconnected";
         case 5:
-            return "断开：Ping包超时断开";
+            return "Disconnected: Ping timeout";
         case 6:
-            return "断开：网络异常断开";
+            return "Disconnected: Network error";
         case 255:
-            return "断开：未知错误";
+            return "Disconnected: Unknown error";
         default:
-            return "未知错误";
+            return "Unknown error";
     }
 }

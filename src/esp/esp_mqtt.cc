@@ -9,11 +9,10 @@ EspMqtt::EspMqtt() {
 }
 
 EspMqtt::~EspMqtt() {
+    Disconnect();
     if (event_group_handle_ != nullptr) {
-        Disconnect();
+        vEventGroupDelete(event_group_handle_);
     }
-
-    vEventGroupDelete(event_group_handle_);
 }
 
 bool EspMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
@@ -50,11 +49,21 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
     auto event = (esp_mqtt_event_t*)event_data;
     switch (event_id) {
     case MQTT_EVENT_CONNECTED:
-        connected_ = true;
+        if (!connected_) {
+            connected_ = true;
+            if (on_connected_callback_) {
+                on_connected_callback_();
+            }
+        }
         xEventGroupSetBits(event_group_handle_, MQTT_CONNECTED_EVENT);
         break;
     case MQTT_EVENT_DISCONNECTED:
-        connected_ = false;
+        if (connected_) {
+            connected_ = false;
+            if (on_disconnected_callback_) {
+                on_disconnected_callback_();
+            }
+        }
         xEventGroupSetBits(event_group_handle_, MQTT_DISCONNECTED_EVENT);
         break;
     case MQTT_EVENT_DATA: {
@@ -77,10 +86,15 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
         break;
     case MQTT_EVENT_SUBSCRIBED:
         break;
-    case MQTT_EVENT_ERROR:
+    case MQTT_EVENT_ERROR: {
         xEventGroupSetBits(event_group_handle_, MQTT_ERROR_EVENT);
-        ESP_LOGI(TAG, "MQTT error occurred: %s", esp_err_to_name(event->error_handle->esp_tls_last_esp_err));
+        const char* error_name = esp_err_to_name(event->error_handle->esp_tls_last_esp_err);
+        ESP_LOGI(TAG, "MQTT error occurred: %s", error_name);
+        if (on_error_callback_) {
+            on_error_callback_(error_name ? error_name : "MQTT error");
+        }
         break;
+    }
     default:
         ESP_LOGI(TAG, "Unhandled event id %ld", event_id);
         break;
@@ -88,9 +102,11 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
 }
 
 void EspMqtt::Disconnect() {
-    esp_mqtt_client_stop(mqtt_client_handle_);
-    esp_mqtt_client_destroy(mqtt_client_handle_);
-    mqtt_client_handle_ = nullptr;
+    if (mqtt_client_handle_ != nullptr) {
+        esp_mqtt_client_stop(mqtt_client_handle_);
+        esp_mqtt_client_destroy(mqtt_client_handle_);
+        mqtt_client_handle_ = nullptr;
+    }
     connected_ = false;
     xEventGroupClearBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT | MQTT_ERROR_EVENT);
 }
