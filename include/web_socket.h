@@ -5,6 +5,7 @@
 #include <string>
 #include <map>
 #include <thread>
+#include <mutex>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
@@ -40,8 +41,10 @@ private:
     std::string receive_buffer_;
     bool handshake_completed_ = false;
     bool connected_ = false;
+
+    // Mutex for sending data and replying pong
+    std::mutex send_mutex_;
     
-    // FreeRTOS 事件组用于同步握手
     EventGroupHandle_t handshake_event_group_;
     static const EventBits_t HANDSHAKE_SUCCESS_BIT = BIT0;
     static const EventBits_t HANDSHAKE_FAILED_BIT = BIT1;

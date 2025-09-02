@@ -246,6 +246,7 @@ bool WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
     continuation_ = !fin;
 
     // 发送帧
+    std::lock_guard<std::mutex> lock(send_mutex_);
     return tcp_->Send(frame) >= 0;
 }
 
@@ -381,11 +382,11 @@ void WebSocket::OnTcpData(const std::string& data) {
                 }
                 break;
             case 0x9: // Ping
-                // 发送 Pong
-                SendControlFrame(0xA, payload.data(), payload_length);
+                std::thread([this, payload, payload_length]() {
+                    SendControlFrame(0xA, payload.data(), payload_length);
+                }).detach();
                 break;
             case 0xA: // Pong
-                // 可以在这里处理 Pong
                 break;
             default:
                 ESP_LOGE(TAG, "Unknown opcode: %d", opcode);
@@ -432,5 +433,6 @@ bool WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
     }
 
     // 发送帧
+    std::lock_guard<std::mutex> lock(send_mutex_);
     return tcp_->Send(frame) >= 0;
 }
