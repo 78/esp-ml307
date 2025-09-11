@@ -233,7 +233,7 @@ void HttpClient::Close() {
 void HttpClient::OnTcpData(const std::string& data) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // 检查 body_chunks_ 大小，如果超过 8KB 且 heap 小于 64KB 则阻塞
+    // 检查 body_chunks_ 大小，如果超过 8KB
     {
         std::unique_lock<std::mutex> read_lock(read_mutex_);
         write_cv_.wait(read_lock, [this, size=data.size()] {
@@ -241,8 +241,7 @@ void HttpClient::OnTcpData(const std::string& data) {
             for (const auto& chunk : body_chunks_) {
                 total_size += chunk.data.size();
             }
-            size_t free_heap = esp_get_free_heap_size();
-            return total_size < MAX_BODY_CHUNKS_SIZE || !connected_ || free_heap >= 65536;
+            return total_size < MAX_BODY_CHUNKS_SIZE || !connected_;
         });
     }
 
