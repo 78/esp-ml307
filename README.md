@@ -3,6 +3,8 @@
 这是一个适用于 ML307R / EC801E / NT26K LTE Cat.1 模组的组件。
 本项目最初为 https://github.com/78/xiaozhi-esp32 项目创建。
 
+出现 UART_FIFO_OVF 需要设置 CONFIG_UART_ISR_IN_IRAM=y，其他 IO 如 LVGL 放在 CPU1
+
 ## 🆕 版本 3.0 新特性
 
 - **自动模组检测**: 自动识别 ML307 和 EC801E 模组
