@@ -19,6 +19,10 @@
 #define AT_EVENT_DATA_AVAILABLE BIT1
 #define AT_EVENT_COMMAND_DONE   BIT2
 #define AT_EVENT_COMMAND_ERROR  BIT3
+#define AT_EVENT_BUFFER_FULL    BIT4
+#define AT_EVENT_FIFO_OVF       BIT5
+#define AT_EVENT_BREAK          BIT6
+#define AT_EVENT_UNKNOWN        BIT7
 
 // 默认配置
 #define UART_NUM                UART_NUM_1

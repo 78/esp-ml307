@@ -61,17 +61,17 @@ void AtUart::Initialize() {
         gpio_set_level(dtr_pin_, 0);
     }
 
-    xTaskCreate([](void* arg) {
+    xTaskCreatePinnedToCore([](void* arg) {
         auto ml307_at_modem = (AtUart*)arg;
         ml307_at_modem->EventTask();
         vTaskDelete(NULL);
-    }, "modem_event", 4096, this, 15, &event_task_handle_);
+    }, "modem_event", 2048, this, configMAX_PRIORITIES - 1, &event_task_handle_, 0);
 
-    xTaskCreate([](void* arg) {
+    xTaskCreatePinnedToCore([](void* arg) {
         auto ml307_at_modem = (AtUart*)arg;
         ml307_at_modem->ReceiveTask();
         vTaskDelete(NULL);
-    }, "modem_receive", 4096 * 2, this, 15, &receive_task_handle_);
+    }, "modem_receive", 2048 * 3, this, configMAX_PRIORITIES - 2, &receive_task_handle_, 0);
     initialized_ = true;
 }
 
@@ -91,14 +91,13 @@ void AtUart::EventTask() {
                 xEventGroupSetBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE);
                 break;
             case UART_BREAK:
-                ESP_LOGI(TAG, "break");
+                xEventGroupSetBits(event_group_handle_, AT_EVENT_BREAK);
                 break;
             case UART_BUFFER_FULL:
-                ESP_LOGE(TAG, "buffer full");
+                xEventGroupSetBits(event_group_handle_, AT_EVENT_BUFFER_FULL);
                 break;
             case UART_FIFO_OVF:
-                ESP_LOGE(TAG, "FIFO overflow");
-                HandleUrc("FIFO_OVERFLOW", {});
+                xEventGroupSetBits(event_group_handle_, AT_EVENT_FIFO_OVF);
                 break;
             default:
                 ESP_LOGE(TAG, "unknown event type: %d", event.type);
@@ -110,7 +109,7 @@ void AtUart::EventTask() {
 
 void AtUart::ReceiveTask() {
     while (true) {
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE, pdTRUE, pdFALSE, portMAX_DELAY);
+        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_FIFO_OVF | AT_EVENT_BUFFER_FULL | AT_EVENT_BREAK, pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & AT_EVENT_DATA_AVAILABLE) {
             size_t available;
             uart_get_buffered_data_len(uart_num_, &available);
@@ -121,6 +120,16 @@ void AtUart::ReceiveTask() {
                 uart_read_bytes(uart_num_, rx_buffer_ptr, available, portMAX_DELAY);
                 while (ParseResponse()) {}
             }
+        }
+        if (bits & AT_EVENT_FIFO_OVF) {
+            ESP_LOGE(TAG, "FIFO overflow");
+            HandleUrc("FIFO_OVERFLOW", {});
+        }
+        if (bits & AT_EVENT_BREAK) {
+            ESP_LOGE(TAG, "Break");
+        }
+        if (bits & AT_EVENT_BUFFER_FULL) {
+            ESP_LOGE(TAG, "Buffer full");
         }
     }
 }

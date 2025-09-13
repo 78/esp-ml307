@@ -39,10 +39,12 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
                     body_.append(decoded_data);
 
                     // chunked传输时，EOF由cur_len == 0判断，非 chunked传输时，EOF由content_len判断
-                    if (response_chunked_) {
-                        eof_ = arguments[4].int_value == 0;
-                    } else {
-                        eof_ = arguments[3].int_value >= arguments[2].int_value;
+                    if (!eof_) {
+                        if (response_chunked_) {
+                            eof_ = arguments[4].int_value == 0;
+                        } else {
+                            eof_ = arguments[3].int_value >= arguments[2].int_value;
+                        }
                     }
                     
                     body_offset_ += arguments[4].int_value;
@@ -87,6 +89,9 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
     
     if (!received) {
         ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received");
+        return -1;
+    }
+    if (!instance_active_) {
         return -1;
     }
     
@@ -319,7 +324,7 @@ std::string Ml307Http::ReadAll() {
         ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received");
         return body_;
     }
-    
+
     return body_;
 }
 
@@ -332,7 +337,7 @@ void Ml307Http::Close() {
 
     instance_active_ = false;
     eof_ = true;
-    cv_.notify_one();
+    cv_.notify_all();
     ESP_LOGI(TAG, "HTTP connection closed, ID: %d", http_id_);
 }
 
