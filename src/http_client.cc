@@ -593,25 +593,35 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
 }
 
 int HttpClient::Write(const char* buffer, size_t buffer_size) {
-    if (!connected_ || !request_chunked_) {
-        ESP_LOGE(TAG, "Cannot write: connection closed or not chunked mode");
+    if (!connected_) {
+        ESP_LOGE(TAG, "Cannot write: connection closed");
         return -1;
     }
 
-    if (buffer_size == 0) {
-        // 发送结束 chunk
-        std::string end_chunk = "0\r\n\r\n";
-        return tcp_->Send(end_chunk);
+    if (request_chunked_) {
+        // Chunked 模式
+        if (buffer_size == 0) {
+            // 发送结束 chunk
+            std::string end_chunk = "0\r\n\r\n";
+            return tcp_->Send(end_chunk);
+        }
+
+        // 发送 chunk
+        std::ostringstream chunk;
+        chunk << std::hex << buffer_size << "\r\n";
+        chunk.write(buffer, buffer_size);
+        chunk << "\r\n";
+
+        std::string chunk_data = chunk.str();
+        return tcp_->Send(chunk_data);
+    } else {
+        // 非 Chunked 模式，直接发送原始数据
+        if (buffer_size == 0) {
+            return 0;  // 无数据需要发送
+        }
+
+        return tcp_->Send(std::string(buffer, buffer_size));
     }
-
-    // 发送 chunk
-    std::ostringstream chunk;
-    chunk << std::hex << buffer_size << "\r\n";
-    chunk.write(buffer, buffer_size);
-    chunk << "\r\n";
-
-    std::string chunk_data = chunk.str();
-    return tcp_->Send(chunk_data);
 }
 
 int HttpClient::GetStatusCode() {
