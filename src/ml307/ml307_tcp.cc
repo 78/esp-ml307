@@ -174,7 +174,15 @@ int Ml307Tcp::Send(const std::string& data) {
         at_uart_->EncodeHexAppend(command, data.data() + total_sent, chunk_size);
         command += "\r\n";
         
-        if (!at_uart_->SendCommand(command, 100, false)) {
+        // 根据波特率和命令长度动态计算超时：传输时间(10位/字节) + 处理余量
+        int baud = at_uart_->GetBaudRate();
+        if (baud <= 0) baud = 115200;
+        size_t bytes_to_tx = command.size();
+        // 发送位数≈字节*10（1起始+8数据+1停止），转毫秒
+        uint32_t tx_time_ms = static_cast<uint32_t>((bytes_to_tx * 10ULL * 1000ULL) / static_cast<uint32_t>(baud));
+        uint32_t timeout_ms = tx_time_ms + 100; // 余量
+
+        if (!at_uart_->SendCommand(command, timeout_ms, false)) {
             ESP_LOGE(TAG, "Failed to send data chunk");
             Disconnect();
             return -1;
