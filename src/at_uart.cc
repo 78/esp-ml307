@@ -75,12 +75,6 @@ void AtUart::Initialize() {
     initialized_ = true;
 }
 
-void AtUart::EventTaskWrapper(void* arg) {
-    auto uart = static_cast<AtUart*>(arg);
-    uart->EventTask();
-    vTaskDelete(nullptr);
-}
-
 void AtUart::EventTask() {
     uart_event_t event;
     while (true) {

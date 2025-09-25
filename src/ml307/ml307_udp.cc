@@ -144,7 +144,7 @@ int Ml307Udp::Send(const std::string& data) {
     at_uart_->EncodeHexAppend(command, data.data(), data.size());
     command += "\r\n";
     
-    if (!at_uart_->SendCommand(command, 100, false)) {
+    if (!at_uart_->SendCommand(command, 1000, false)) {
         ESP_LOGE(TAG, "Failed to send data chunk");
         return -1;
     }

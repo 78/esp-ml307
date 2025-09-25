@@ -119,9 +119,6 @@ private:
     // 处理 URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
     bool SendData(const char* data, size_t length);
-
-    // 静态任务函数
-    static void EventTaskWrapper(void* arg);
 };
 
 #endif // _AT_UART_H_
