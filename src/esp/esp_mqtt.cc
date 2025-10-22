@@ -115,21 +115,22 @@ bool EspMqtt::Publish(const std::string topic, const std::string payload, int qo
     if (!connected_) {
         return false;
     }
-    return esp_mqtt_client_publish(mqtt_client_handle_, topic.c_str(), payload.data(), payload.size(), qos, 0) == 0;
+    int msg_id = esp_mqtt_client_publish(mqtt_client_handle_, topic.c_str(), payload.data(), payload.size(), qos, 0);
+    return (qos == 0) ? (msg_id == 0) : (msg_id > 0);
 }
 
 bool EspMqtt::Subscribe(const std::string topic, int qos) {
     if (!connected_) {
         return false;
     }
-    return esp_mqtt_client_subscribe_single(mqtt_client_handle_, topic.c_str(), qos) == 0;
+    return esp_mqtt_client_subscribe_single(mqtt_client_handle_, topic.c_str(), qos) > 0;
 }
 
 bool EspMqtt::Unsubscribe(const std::string topic) {
     if (!connected_) {
         return false;
     }
-    return esp_mqtt_client_unsubscribe(mqtt_client_handle_, topic.c_str()) == 0;
+    return esp_mqtt_client_unsubscribe(mqtt_client_handle_, topic.c_str()) > 0;
 }
 
 bool EspMqtt::IsConnected() {
