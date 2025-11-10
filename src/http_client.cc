@@ -36,6 +36,25 @@ void HttpClient::SetContent(std::string&& content) {
     content_ = std::move(content);
 }
 
+void HttpClient::SetKeepAlive(bool enable) {
+    keep_alive_ = enable;
+}
+
+bool HttpClient::IsConnectionReusable(const std::string& host, int port) const {
+    // 检查是否可以复用连接：
+    // 1. 已连接
+    // 2. host 和 port 相同
+    // 3. 没有连接错误
+    // 4. 上一次响应支持 Keep-Alive
+    // 5. 上一次请求已完成（数据已接收完整）
+    return connected_ && 
+           host_ == host && 
+           port_ == port && 
+           !connection_error_ &&
+           server_keep_alive_ &&
+           IsDataComplete();
+}
+
 bool HttpClient::ParseUrl(const std::string& url) {
     // 解析 URL: protocol://host:port/path
     size_t protocol_end = url.find("://");
@@ -131,7 +150,11 @@ std::string HttpClient::BuildHttpRequest() {
 
     // 连接控制（仅在用户未设置时添加）
     if (headers_.find("connection") == headers_.end()) {
-        request << "Connection: close\r\n";
+        if (keep_alive_) {
+            request << "Connection: keep-alive\r\n";
+        } else {
+            request << "Connection: close\r\n";
+        }
     }
 
     // 结束头部
@@ -149,59 +172,55 @@ std::string HttpClient::BuildHttpRequest() {
 bool HttpClient::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
-
-    // 重置状态
-    status_code_ = -1;
-    response_headers_.clear();
-    {
-        std::lock_guard<std::mutex> read_lock(read_mutex_);
-        body_chunks_.clear();
-    }
-    body_offset_ = 0;
-    content_length_ = 0;
-    total_body_received_ = 0;
-    eof_ = false;
-    headers_received_ = false;
-    response_chunked_ = false;
-    connection_error_ = false;  // 重置连接错误状态
-    parse_state_ = ParseState::STATUS_LINE;
-    chunk_size_ = 0;
-    chunk_received_ = 0;
-    rx_buffer_.clear();
-
-    xEventGroupClearBits(event_group_handle_,
-                         EC801E_HTTP_EVENT_HEADERS_RECEIVED |
-                         EC801E_HTTP_EVENT_BODY_RECEIVED |
-                         EC801E_HTTP_EVENT_ERROR |
-                         EC801E_HTTP_EVENT_COMPLETE);
-
-    // 解析 URL
+    
     if (!ParseUrl(url)) {
         return false;
     }
 
-    // 建立 TCP 连接
-    if (protocol_ == "https") {
-        tcp_ = network_->CreateSsl(connect_id_);
+    // 检查是否可以复用现有连接
+    bool can_reuse = IsConnectionReusable(host_, port_);
+    
+    if (can_reuse) {
+        ESP_LOGI(TAG, "Reusing existing connection to %s:%d", host_.c_str(), port_);
+        // 只重置请求状态，不关闭连接（不会清空 content_）
+        ResetRequestState();
     } else {
-        tcp_ = network_->CreateTcp(connect_id_);
+        // 如果之前有连接，先关闭
+        if (connected_) {
+            ESP_LOGI(TAG, "Closing previous connection (host or port changed, or connection not reusable)");
+            tcp_->Disconnect();
+            connected_ = false;
+        }
+        
+        // 重置所有状态（不会清空 content_）
+        ResetRequestState();
+        
+        // 建立新的 TCP 连接
+        if (protocol_ == "https") {
+            tcp_ = network_->CreateSsl(connect_id_);
+        } else {
+            tcp_ = network_->CreateTcp(connect_id_);
+        }
+
+        // 设置 TCP 数据接收回调
+        tcp_->OnStream([this](const std::string& data) {
+            OnTcpData(data);
+        });
+
+        // 设置 TCP 断开连接回调
+        tcp_->OnDisconnected([this]() {
+            OnTcpDisconnected();
+        });
+        
+        if (!tcp_->Connect(host_, port_)) {
+            ESP_LOGE(TAG, "TCP connection failed");
+            return false;
+        }
+        
+        connected_ = true;
+        ESP_LOGI(TAG, "Established new connection to %s:%d", host_.c_str(), port_);
     }
-
-    // 设置 TCP 数据接收回调
-    tcp_->OnStream([this](const std::string& data) {
-        OnTcpData(data);
-    });
-
-    // 设置 TCP 断开连接回调
-    tcp_->OnDisconnected([this]() {
-        OnTcpDisconnected();
-    });
-    if (!tcp_->Connect(host_, port_)) {
-        ESP_LOGE(TAG, "TCP connection failed");
-        return false;
-    }
-
-    connected_ = true;
+    
     request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
 
     // 构建并发送 HTTP 请求
@@ -213,6 +232,10 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
         return false;
     }
 
+    // 发送完成后清空 content_ 和 headers_，避免下次请求误用
+    content_ = std::nullopt;
+    headers_.clear();
+
     return true;
 }
 
@@ -222,12 +245,13 @@ void HttpClient::Close() {
     }
 
     connected_ = false;
+    server_keep_alive_ = false;  // 重置 Keep-Alive 标志
     write_cv_.notify_all();
     tcp_->Disconnect();
 
     eof_ = true;
     cv_.notify_all();
-    ESP_LOGD(TAG, "HTTP connection closed");
+    ESP_LOGI(TAG, "HTTP connection closed");
 }
 
 void HttpClient::OnTcpData(const std::string& data) {
@@ -253,6 +277,7 @@ void HttpClient::OnTcpData(const std::string& data) {
 void HttpClient::OnTcpDisconnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
+    server_keep_alive_ = false;  // 连接断开，重置 Keep-Alive 标志
 
     // 检查数据是否完整接收
     if (headers_received_ && !IsDataComplete()) {
@@ -293,6 +318,20 @@ void HttpClient::ProcessReceivedData() {
                 // 检查是否为空行（头部结束标记）
                 // GetNextLine 已经移除了 \r，所以空行就是 empty()
                 if (line.empty()) {
+                    // 检查服务器是否支持 Keep-Alive
+                    auto conn_it = response_headers_.find("connection");
+                    if (conn_it != response_headers_.end()) {
+                        std::string conn_value = conn_it->second.value;
+                        std::transform(conn_value.begin(), conn_value.end(), conn_value.begin(), ::tolower);
+                        if (conn_value.find("keep-alive") != std::string::npos) {
+                            server_keep_alive_ = true;
+                            ESP_LOGD(TAG, "Server supports Keep-Alive");
+                        } else if (conn_value.find("close") != std::string::npos) {
+                            server_keep_alive_ = false;
+                            ESP_LOGD(TAG, "Server will close connection");
+                        }
+                    }
+                    
                     // 检查是否为 chunked 编码
                     auto it = response_headers_.find("transfer-encoding");
                     if (it != response_headers_.end() &&
@@ -730,4 +769,36 @@ bool HttpClient::IsDataComplete() const {
     // 如果没有content-length且不是chunked，当连接关闭时认为完整
     // 这种情况通常用于HTTP/1.0或者content-length为0的响应
     return true;
+}
+
+void HttpClient::ResetRequestState() {
+    // 重置请求状态，但保持连接
+    status_code_ = -1;
+    response_headers_.clear();
+    {
+        std::lock_guard<std::mutex> read_lock(read_mutex_);
+        body_chunks_.clear();
+    }
+    body_offset_ = 0;
+    content_length_ = 0;
+    total_body_received_ = 0;
+    eof_ = false;
+    headers_received_ = false;
+    response_chunked_ = false;
+    request_chunked_ = false;  // 重置请求 chunked 标志
+    connection_error_ = false;
+    parse_state_ = ParseState::STATUS_LINE;
+    chunk_size_ = 0;
+    chunk_received_ = 0;
+    rx_buffer_.clear();
+
+    // 注意：不清除 content_ 和 headers_
+    // content_ 会在 Open() 发送请求后清空
+    // headers_ 由用户在每次请求前重新配置
+
+    xEventGroupClearBits(event_group_handle_,
+                         EC801E_HTTP_EVENT_HEADERS_RECEIVED |
+                         EC801E_HTTP_EVENT_BODY_RECEIVED |
+                         EC801E_HTTP_EVENT_ERROR |
+                         EC801E_HTTP_EVENT_COMPLETE);
 }

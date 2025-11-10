@@ -144,6 +144,12 @@ void Ml307Http::SetTimeout(int timeout_ms) {
     timeout_ms_ = timeout_ms;
 }
 
+void Ml307Http::SetKeepAlive(bool enable) {
+    ESP_LOGW(TAG, "SetKeepAlive is not implemented for ML307");
+    // FIXME: Not implemented yet
+    keep_alive_ = enable;
+}
+
 void Ml307Http::ParseResponseHeaders(const std::string& headers) {
     std::istringstream iss(headers);
     std::string line;

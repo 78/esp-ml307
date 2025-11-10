@@ -26,6 +26,7 @@ public:
     void SetTimeout(int timeout_ms) override;
     void SetHeader(const std::string& key, const std::string& value) override;
     void SetContent(std::string&& content) override;
+    void SetKeepAlive(bool enable) override;
     bool Open(const std::string& method, const std::string& url) override;
     void Close() override;
     int Read(char* buffer, size_t buffer_size) override;
@@ -63,6 +64,7 @@ private:
     bool instance_active_ = false;
     bool request_chunked_ = false;
     bool response_chunked_ = false;
+    bool keep_alive_ = false;
 
     bool FetchHeaders();
     void ParseResponseHeaders(const std::string& headers);

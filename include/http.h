@@ -18,6 +18,9 @@ public:
     // 设置 HTTP Content
     virtual void SetContent(std::string&& content) = 0;
 
+    // 设置 Keep-Alive
+    virtual void SetKeepAlive(bool enable) = 0;
+
     // 打开 HTTP 连接并发送请求
     virtual bool Open(const std::string& method, const std::string& url) = 0;
 
