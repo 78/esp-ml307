@@ -1,6 +1,8 @@
 #include "at_uart.h"
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_pm.h>
+#include <esp_sleep.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -10,10 +12,18 @@
 
 
 // AtUart 构造函数实现
-AtUart::AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin)
-    : tx_pin_(tx_pin), rx_pin_(rx_pin), dtr_pin_(dtr_pin), uart_num_(UART_NUM),
-      baud_rate_(115200), initialized_(false),
-      event_task_handle_(nullptr), event_queue_handle_(nullptr), event_group_handle_(nullptr) {
+AtUart::AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin)
+    : tx_pin_(tx_pin), rx_pin_(rx_pin), dtr_pin_(dtr_pin), ri_pin_(ri_pin), uart_num_(UART_NUM),
+      baud_rate_(115200), initialized_(false), dtr_pin_state_(false),
+      pm_lock_(nullptr), ri_pm_lock_(nullptr), ri_pm_lock_acquired_(false),
+      event_task_handle_(nullptr), receive_task_handle_(nullptr),
+      event_queue_handle_(nullptr), event_group_handle_(nullptr) {
+    // Create power management lock for DTR operations
+    esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "at_uart_pm_lock", &pm_lock_);
+    // Create power management lock for RI pin operations
+    if (ri_pin_ != GPIO_NUM_NC) {
+        esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "at_uart_ri_pm_lock", &ri_pm_lock_);
+    }
 }
 
 AtUart::~AtUart() {
@@ -24,7 +34,20 @@ AtUart::~AtUart() {
         vEventGroupDelete(event_group_handle_);
     }
     if (initialized_) {
+        // Remove RI pin ISR handler if configured
+        if (ri_pin_ != GPIO_NUM_NC) {
+            gpio_isr_handler_remove(ri_pin_);
+        }
         uart_driver_delete(uart_num_);
+    }
+    if (ri_pm_lock_) {
+        if (ri_pm_lock_acquired_) {
+            esp_pm_lock_release(ri_pm_lock_);
+        }
+        esp_pm_lock_delete(ri_pm_lock_);
+    }
+    if (pm_lock_) {
+        esp_pm_lock_delete(pm_lock_);
     }
 }
 
@@ -59,6 +82,23 @@ void AtUart::Initialize() {
         config.intr_type = GPIO_INTR_DISABLE;
         gpio_config(&config);
         gpio_set_level(dtr_pin_, 0);
+        dtr_pin_state_ = false;  // 记录初始状态为低电平
+    }
+
+    // Configure RI pin as input with interrupt
+    if (ri_pin_ != GPIO_NUM_NC) {
+        gpio_config_t ri_config = {};
+        ri_config.pin_bit_mask = (1ULL << ri_pin_);
+        ri_config.mode = GPIO_MODE_INPUT;
+        ri_config.pull_up_en = GPIO_PULLUP_ENABLE;  // Enable pull-up for RI pin
+        ri_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        ri_config.intr_type = GPIO_INTR_LOW_LEVEL;  // Trigger on falling edge (low level)
+        gpio_config(&ri_config);
+
+        gpio_wakeup_enable(ri_pin_, GPIO_INTR_LOW_LEVEL);
+
+        // Add ISR handler for RI pin
+        gpio_isr_handler_add(ri_pin_, RiPinIsrHandler, this);
     }
 
     xTaskCreatePinnedToCore([](void* arg) {
@@ -103,7 +143,8 @@ void AtUart::EventTask() {
 
 void AtUart::ReceiveTask() {
     while (true) {
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_FIFO_OVF | AT_EVENT_BUFFER_FULL | AT_EVENT_BREAK, pdTRUE, pdFALSE, portMAX_DELAY);
+        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_FIFO_OVF |
+            AT_EVENT_BUFFER_FULL | AT_EVENT_BREAK | AT_EVENT_RI_PIN_INT, pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & AT_EVENT_DATA_AVAILABLE) {
             size_t available;
             uart_get_buffered_data_len(uart_num_, &available);
@@ -124,6 +165,22 @@ void AtUart::ReceiveTask() {
         }
         if (bits & AT_EVENT_BUFFER_FULL) {
             ESP_LOGE(TAG, "Buffer full");
+        }
+
+        if (bits & AT_EVENT_RI_PIN_INT) {
+            // RI pin went low - acquire PM lock to prevent sleep
+            if (ri_pin_ != GPIO_NUM_NC && !ri_pm_lock_acquired_) {
+                esp_pm_lock_acquire(ri_pm_lock_);
+                ri_pm_lock_acquired_ = true;
+                ESP_LOGD(TAG, "RI pin went low, PM lock acquired");
+            }
+        } else {
+            // Release RI PM lock when data is available (modem has data to send)
+            if (ri_pin_ != GPIO_NUM_NC && ri_pm_lock_acquired_) {
+                esp_pm_lock_release(ri_pm_lock_);
+                ri_pm_lock_acquired_ = false;
+                ESP_LOGD(TAG, "Data available, RI PM lock released");
+            }
         }
     }
 }
@@ -164,7 +221,8 @@ bool AtUart::ParseResponse() {
         return true;
     }
 
-    ESP_LOGD(TAG, "<< %.64s (%u bytes)", rx_buffer_.substr(0, end_pos).c_str(), end_pos);
+    ESP_LOGD(TAG, "<< %.64s (%u bytes) [%02x%02x%02x]", rx_buffer_.substr(0, end_pos).c_str(), end_pos,
+        rx_buffer_[0], rx_buffer_[1], rx_buffer_[2]);
     // print last 64 bytes before end_pos if available
     // if (end_pos > 64) {
     //     ESP_LOGI(TAG, "<< LAST: %.64s", rx_buffer_.c_str() + end_pos - 64);
@@ -215,6 +273,9 @@ bool AtUart::ParseResponse() {
         rx_buffer_.erase(0, 7);
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
         return true;
+    } else if (rx_buffer_[0] == 0xE0) { // 4G wake up MCU, just ignore
+        rx_buffer_.erase(0, end_pos + 2);
+        return true;
     } else {
         std::lock_guard<std::mutex> lock(mutex_);
         response_ = rx_buffer_.substr(0, end_pos);
@@ -222,14 +283,6 @@ bool AtUart::ParseResponse() {
         return true;
     }
     return false;
-}
-
-void AtUart::HandleCommand(const char* command) {
-    // 这个函数现在主要用于向后兼容，大部分处理逻辑已经移到 ParseLine 中
-    if (wait_for_response_) {
-        response_.append(command);
-        response_.append("\r\n");
-    }
 }
 
 void AtUart::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
@@ -303,7 +356,10 @@ bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, 
     xEventGroupClearBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR);
     wait_for_response_ = true;
     cme_error_code_ = 0;
-    response_.clear();
+    {
+        std::lock_guard<std::mutex> response_lock(mutex_);
+        response_.clear();
+    }
 
     if (add_crlf) {
         if (!SendData((command + "\r\n").data(), command.length() + 2)) {
@@ -342,6 +398,11 @@ bool AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add
     return SendCommandWithData(command, timeout_ms, add_crlf, nullptr, 0);
 }
 
+std::string AtUart::GetResponse() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return response_;
+}
+
 std::list<UrcCallback>::iterator AtUart::RegisterUrcCallback(UrcCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     return urc_callbacks_.insert(urc_callbacks_.end(), callback);
@@ -356,6 +417,7 @@ void AtUart::SetDtrPin(bool high) {
     if (dtr_pin_ != GPIO_NUM_NC) {
         ESP_LOGD(TAG, "Set DTR pin %d to %d", dtr_pin_, high ? 1 : 0);
         gpio_set_level(dtr_pin_, high ? 1 : 0);
+        dtr_pin_state_ = high;  // 记录DTR pin的状态
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -395,4 +457,13 @@ std::string AtUart::DecodeHex(const std::string& data) {
     std::string decoded;
     DecodeHexAppend(decoded, data.c_str(), data.size());
     return decoded;
+}
+
+// RI pin ISR handler (runs in IRAM)
+void IRAM_ATTR AtUart::RiPinIsrHandler(void* arg) {
+    AtUart* at_uart = static_cast<AtUart*>(arg);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // Notify the task to handle the interrupt
+    xEventGroupSetBitsFromISR(at_uart->event_group_handle_, AT_EVENT_RI_PIN_INT, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }

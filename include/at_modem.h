@@ -50,6 +50,8 @@ class AtModem : public NetworkInterface {
 public:
     // 静态检测方法
     static std::unique_ptr<AtModem> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin = GPIO_NUM_NC, int baud_rate = 115200);
+    // 静态检测方法（带 RI pin）
+    static std::unique_ptr<AtModem> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate);
     
     // 构造函数和析构函数
     AtModem(std::shared_ptr<AtUart> at_uart);
