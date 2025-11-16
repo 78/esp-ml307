@@ -167,19 +167,22 @@ void AtUart::ReceiveTask() {
             ESP_LOGE(TAG, "Buffer full");
         }
 
-        if (bits & AT_EVENT_RI_PIN_INT) {
-            // RI pin went low - acquire PM lock to prevent sleep
-            if (ri_pin_ != GPIO_NUM_NC && !ri_pm_lock_acquired_) {
-                esp_pm_lock_acquire(ri_pm_lock_);
-                ri_pm_lock_acquired_ = true;
-                ESP_LOGD(TAG, "RI pin went low, PM lock acquired");
-            }
-        } else {
-            // Release RI PM lock when data is available (modem has data to send)
-            if (ri_pin_ != GPIO_NUM_NC && ri_pm_lock_acquired_) {
-                esp_pm_lock_release(ri_pm_lock_);
-                ri_pm_lock_acquired_ = false;
-                ESP_LOGD(TAG, "Data available, RI PM lock released");
+        if (ri_pin_ != GPIO_NUM_NC) {
+            if (bits & AT_EVENT_RI_PIN_INT) {
+                // RI pin went low - acquire PM lock to prevent sleep
+                if (!ri_pm_lock_acquired_) {
+                    esp_pm_lock_acquire(ri_pm_lock_);
+                    ri_pm_lock_acquired_ = true;
+                    ESP_LOGD(TAG, "RI pin went low, PM lock acquired");
+                }
+            } else {
+                // Release RI PM lock when data is available (modem has data to send)
+                if (ri_pm_lock_acquired_) {
+                    esp_pm_lock_release(ri_pm_lock_);
+                    ri_pm_lock_acquired_ = false;
+                    gpio_intr_enable(ri_pin_);
+                    ESP_LOGD(TAG, "Data available, RI PM lock released");
+                }
             }
         }
     }
@@ -462,8 +465,10 @@ std::string AtUart::DecodeHex(const std::string& data) {
 // RI pin ISR handler (runs in IRAM)
 void IRAM_ATTR AtUart::RiPinIsrHandler(void* arg) {
     AtUart* at_uart = static_cast<AtUart*>(arg);
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // Disable interrupt
+    gpio_intr_disable(at_uart->ri_pin_);
     // Notify the task to handle the interrupt
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xEventGroupSetBitsFromISR(at_uart->event_group_handle_, AT_EVENT_RI_PIN_INT, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
