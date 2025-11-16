@@ -213,7 +213,8 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
         });
         
         if (!tcp_->Connect(host_, port_)) {
-            ESP_LOGE(TAG, "TCP connection failed");
+            last_error_ = tcp_->GetLastError();
+            ESP_LOGE(TAG, "TCP connection failed, code=0x%x", last_error_);
             return false;
         }
         
@@ -769,6 +770,13 @@ bool HttpClient::IsDataComplete() const {
     // 如果没有content-length且不是chunked，当连接关闭时认为完整
     // 这种情况通常用于HTTP/1.0或者content-length为0的响应
     return true;
+}
+
+int HttpClient::GetLastError() {
+    if (tcp_) {
+        return tcp_->GetLastError();
+    }
+    return last_error_;
 }
 
 void HttpClient::ResetRequestState() {

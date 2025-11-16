@@ -334,6 +334,10 @@ std::string Ml307Http::ReadAll() {
     return body_;
 }
 
+int Ml307Http::GetLastError() {
+    return error_code_;
+}
+
 void Ml307Http::Close() {
     if (!instance_active_) {
         return;

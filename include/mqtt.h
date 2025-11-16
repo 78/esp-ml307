@@ -21,6 +21,9 @@ public:
     virtual void OnMessage(std::function<void(const std::string& topic, const std::string& payload)> callback) { on_message_callback_ = std::move(callback); }
     virtual void OnError(std::function<void(const std::string& error)> callback) { on_error_callback_ = std::move(callback); }
 
+    // 获取最后一次错误码
+    virtual int GetLastError() = 0;
+
 protected:
     int keep_alive_seconds_ = 120;
     std::function<void(const std::string& topic, const std::string& payload)> on_message_callback_;

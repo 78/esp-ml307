@@ -18,6 +18,7 @@ Ec801ESsl::Ec801ESsl(std::shared_ptr<AtUart> at_uart, int ssl_id) : at_uart_(at_
                     xEventGroupSetBits(event_group_handle_, EC801E_SSL_CONNECTED);
                 } else {
                     connected_ = false;
+                    last_error_ = arguments[1].int_value;  // Store error code from QSSLOPEN response
                     xEventGroupSetBits(event_group_handle_, EC801E_SSL_ERROR);
                 }
             }
@@ -157,4 +158,8 @@ int Ec801ESsl::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
+}
+
+int Ec801ESsl::GetLastError() {
+    return last_error_;
 }

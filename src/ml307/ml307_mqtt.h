@@ -27,6 +27,7 @@ public:
     bool Subscribe(const std::string topic, int qos = 0);
     bool Unsubscribe(const std::string topic);
     bool IsConnected();
+    int GetLastError() override;
 
 private:
     std::shared_ptr<AtUart> at_uart_;
@@ -34,6 +35,7 @@ private:
     bool connected_ = false;
     EventGroupHandle_t event_group_handle_;
     std::string message_payload_;
+    int last_error_ = 0;
 
     std::list<UrcCallback>::iterator urc_callback_it_;
 

@@ -276,6 +276,13 @@ void WebSocket::OnError(std::function<void(int)> callback) {
     on_error_ = callback;
 }
 
+int WebSocket::GetLastError() {
+    if (tcp_) {
+        return tcp_->GetLastError();
+    }
+    return 0;  // No error if TCP connection doesn't exist
+}
+
 void WebSocket::OnTcpData(const std::string& data) {
     // 将新数据追加到接收缓冲区
     receive_buffer_.append(data);

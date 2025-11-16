@@ -19,10 +19,13 @@ public:
     void Disconnect() override;
     int Send(const std::string& data) override;
 
+    int GetLastError() override;
+
 private:
     esp_tls_t* tls_client_ = nullptr;
     EventGroupHandle_t event_group_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
+    int last_error_ = 0;
 
     void ReceiveTask();
 };

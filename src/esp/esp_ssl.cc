@@ -36,7 +36,16 @@ bool EspSsl::Connect(const std::string& host, int port) {
 
     int ret = esp_tls_conn_new_sync(host.c_str(), host.length(), port, &cfg, tls_client_);
     if (ret != 1) {
-        ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
+        esp_tls_error_handle_t last_error;
+        if (esp_tls_get_error_handle(tls_client_, &last_error) == ESP_OK) {
+            int error_code, error_flags;
+            esp_err_t err = esp_tls_get_and_clear_last_error(last_error, &error_code, &error_flags);
+            last_error_ = err;
+            ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, err);
+        } else {
+            last_error_ = -1;
+            ESP_LOGE(TAG, "Failed to get error handle");
+        }
         esp_tls_conn_destroy(tls_client_);
         tls_client_ = nullptr;
         return false;
@@ -133,4 +142,8 @@ void EspSsl::ReceiveTask() {
             stream_callback_(data);
         }
     }
+}
+
+int EspSsl::GetLastError() {
+    return last_error_;
 }

@@ -242,3 +242,7 @@ std::string Ec801EMqtt::ErrorToString(int error_code) {
             return "Unknown error";
     }
 }
+
+int Ec801EMqtt::GetLastError() {
+    return error_code_;
+}

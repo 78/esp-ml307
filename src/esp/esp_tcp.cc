@@ -36,6 +36,7 @@ bool EspTcp::Connect(const std::string& host, int port) {
     // host is domain
     struct hostent *server = gethostbyname(host.c_str());
     if (server == NULL) {
+        last_error_ = h_errno;
         ESP_LOGE(TAG, "Failed to get host by name");
         return false;
     }
@@ -43,13 +44,15 @@ bool EspTcp::Connect(const std::string& host, int port) {
 
     tcp_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_fd_ < 0) {
+        last_error_ = errno;
         ESP_LOGE(TAG, "Failed to create socket");
         return false;
     }
 
     int ret = connect(tcp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
     if (ret < 0) {
-        ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
+        last_error_ = errno;
+        ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, last_error_);
         close(tcp_fd_);
         tcp_fd_ = -1;
         return false;
@@ -127,4 +130,8 @@ void EspTcp::ReceiveTask() {
             stream_callback_(data);
         }
     }
+}
+
+int EspTcp::GetLastError() {
+    return last_error_;
 }

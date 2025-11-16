@@ -16,6 +16,7 @@ Ml307Tcp::Ml307Tcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_ua
                     xEventGroupClearBits(event_group_handle_, ML307_TCP_DISCONNECTED | ML307_TCP_ERROR);
                     xEventGroupSetBits(event_group_handle_, ML307_TCP_CONNECTED);
                 } else {
+                    last_error_ = arguments[1].int_value;  // Store error code from MIPOPEN response
                     xEventGroupSetBits(event_group_handle_, ML307_TCP_ERROR);
                 }
             }
@@ -106,7 +107,8 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
     // 打开 TCP 连接
     command = "AT+MIPOPEN=" + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",,0";
     if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open TCP connection, error=%d", at_uart_->GetCmeErrorCode());
+        last_error_ = at_uart_->GetCmeErrorCode();
+        ESP_LOGE(TAG, "Failed to open TCP connection, error=%d", last_error_);
         return false;
     }
 
@@ -197,4 +199,8 @@ int Ml307Tcp::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
+}
+
+int Ml307Tcp::GetLastError() {
+    return last_error_;
 }

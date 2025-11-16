@@ -44,6 +44,9 @@ public:
 
     // 获取 HTTP 响应体
     virtual std::string ReadAll() = 0;
+
+    // 获取最后一次错误码
+    virtual int GetLastError() = 0;
 };
 
 #endif // HTTP_H

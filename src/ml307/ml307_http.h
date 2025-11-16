@@ -36,6 +36,7 @@ public:
     std::string GetResponseHeader(const std::string& key) const override;
     size_t GetBodyLength() override;
     std::string ReadAll() override;
+    int GetLastError() override;
 
 private:
     std::shared_ptr<AtUart> at_uart_;

@@ -17,6 +17,9 @@ public:
     }
     bool connected() const { return connected_; }
 
+    // 获取最后一次错误码
+    virtual int GetLastError() = 0;
+
 protected:
     std::function<void(const std::string& data)> message_callback_;
     bool connected_ = false;

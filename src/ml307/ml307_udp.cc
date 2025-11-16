@@ -17,6 +17,7 @@ Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_ua
                     xEventGroupClearBits(event_group_handle_, ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_CONNECTED);
                 } else {
+                    last_error_ = arguments[1].int_value;  // Store error code from MIPOPEN response
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_ERROR);
                 }
             }
@@ -101,6 +102,7 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
     // 打开 UDP 连接
     command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",,0";
     if (!at_uart_->SendCommand(command)) {
+        last_error_ = at_uart_->GetCmeErrorCode();
         ESP_LOGE(TAG, "Failed to open UDP connection");
         return false;
     }
@@ -149,4 +151,8 @@ int Ml307Udp::Send(const std::string& data) {
         return -1;
     }
     return data.size();
+}
+
+int Ml307Udp::GetLastError() {
+    return last_error_;
 }

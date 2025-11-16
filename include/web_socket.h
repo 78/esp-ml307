@@ -32,6 +32,9 @@ public:
     void OnData(std::function<void(const char*, size_t, bool binary)> callback);
     void OnError(std::function<void(int)> callback);
 
+    // 获取最后一次错误码
+    int GetLastError();
+
 private:
     NetworkInterface* network_;
     int connect_id_;

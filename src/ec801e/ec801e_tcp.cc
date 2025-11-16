@@ -18,6 +18,7 @@ Ec801ETcp::Ec801ETcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_
                     xEventGroupSetBits(event_group_handle_, EC801E_TCP_CONNECTED);
                 } else {
                     connected_ = false;
+                    last_error_ = arguments[1].int_value;  // Store error code from QIOPEN response
                     xEventGroupSetBits(event_group_handle_, EC801E_TCP_ERROR);
                     if (disconnect_callback_) {
                         disconnect_callback_();
@@ -156,4 +157,8 @@ int Ec801ETcp::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
+}
+
+int Ec801ETcp::GetLastError() {
+    return last_error_;
 }

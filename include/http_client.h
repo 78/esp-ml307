@@ -44,6 +44,7 @@ public:
     std::string GetResponseHeader(const std::string& key) const override;
     size_t GetBodyLength() override;
     std::string ReadAll() override;
+    int GetLastError() override;
 
 private:
     // 数据块结构，用于队列缓冲
@@ -121,6 +122,7 @@ private:
     bool connection_error_ = false;  // 新增：标记连接是否异常断开
     bool keep_alive_ = false;  // 新增：是否启用 Keep-Alive（默认不启用）
     bool server_keep_alive_ = false;  // 新增：服务器是否支持 Keep-Alive
+    int last_error_ = 0;  // 存储最后一次错误码
     
     // HTTP 协议解析状态
     enum class ParseState {

@@ -17,6 +17,7 @@ Ec801EUdp::Ec801EUdp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_
                     xEventGroupClearBits(event_group_handle_, EC801E_UDP_DISCONNECTED | EC801E_UDP_ERROR);
                     xEventGroupSetBits(event_group_handle_, EC801E_UDP_CONNECTED);
                 } else {
+                    last_error_ = arguments[1].int_value;  // Store error code from QIOPEN response
                     xEventGroupSetBits(event_group_handle_, EC801E_UDP_ERROR);
                 }
             }
@@ -138,4 +139,8 @@ int Ec801EUdp::Send(const std::string& data) {
     }
 
     return data.size();
+}
+
+int Ec801EUdp::GetLastError() {
+    return last_error_;
 }

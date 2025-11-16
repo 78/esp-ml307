@@ -12,6 +12,7 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
                 auto type = arguments[0].string_value;
                 if (type == "conn") {
                     int error_code = arguments[2].int_value;
+                    last_error_ = error_code;  // Store error code
                     if (error_code == 0) {
                         if (!connected_) {
                             connected_ = true;
@@ -190,4 +191,8 @@ std::string Ml307Mqtt::ErrorToString(int error_code) {
         default:
             return "Unknown error";
     }
+}
+
+int Ml307Mqtt::GetLastError() {
+    return last_error_;
 }

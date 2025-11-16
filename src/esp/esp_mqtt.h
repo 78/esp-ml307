@@ -28,12 +28,14 @@ public:
     bool Subscribe(const std::string topic, int qos = 0);
     bool Unsubscribe(const std::string topic);
     bool IsConnected();
+    int GetLastError() override;
 
 private:
     bool connected_ = false;
     EventGroupHandle_t event_group_handle_;
     std::string message_payload_;
     esp_mqtt_client_handle_t mqtt_client_handle_ = nullptr;
+    int last_error_ = 0;
 
     void MqttEventCallback(esp_event_base_t base, int32_t event_id, void *event_data);
 };

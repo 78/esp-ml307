@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <errno.h>
 
 static const char *TAG = "EspUdp";
 
@@ -35,6 +36,7 @@ bool EspUdp::Connect(const std::string& host, int port) {
     // host is domain
     struct hostent *server = gethostbyname(host.c_str());
     if (server == NULL) {
+        last_error_ = h_errno;
         ESP_LOGE(TAG, "Failed to get host by name");
         return false;
     }
@@ -42,12 +44,14 @@ bool EspUdp::Connect(const std::string& host, int port) {
 
     udp_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_fd_ < 0) {
+        last_error_ = errno;
         ESP_LOGE(TAG, "Failed to create socket");
         return false;
     }
 
     int ret = connect(udp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
     if (ret < 0) {
+        last_error_ = errno;
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
         close(udp_fd_);
         udp_fd_ = -1;
@@ -108,4 +112,8 @@ void EspUdp::ReceiveTask() {
             message_callback_(data);
         }
     }
+}
+
+int EspUdp::GetLastError() {
+    return last_error_;
 }

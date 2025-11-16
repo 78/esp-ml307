@@ -23,6 +23,9 @@ public:
     // 连接状态查询
     bool connected() const { return connected_; }
 
+    // 获取最后一次错误码
+    virtual int GetLastError() = 0;
+
 protected:
     std::function<void(const std::string& data)> stream_callback_;
     std::function<void()> disconnect_callback_;

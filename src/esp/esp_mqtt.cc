@@ -87,6 +87,7 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
     case MQTT_EVENT_SUBSCRIBED:
         break;
     case MQTT_EVENT_ERROR: {
+        last_error_ = event->error_handle->esp_tls_last_esp_err;
         xEventGroupSetBits(event_group_handle_, MQTT_ERROR_EVENT);
         const char* error_name = esp_err_to_name(event->error_handle->esp_tls_last_esp_err);
         ESP_LOGI(TAG, "MQTT error occurred: %s", error_name);
@@ -135,4 +136,8 @@ bool EspMqtt::Unsubscribe(const std::string topic) {
 
 bool EspMqtt::IsConnected() {
     return connected_;
+}
+
+int EspMqtt::GetLastError() {
+    return last_error_;
 }
