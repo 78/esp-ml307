@@ -71,16 +71,35 @@ bool EspTcp::Connect(const std::string& host, int port) {
 }
 
 void EspTcp::Disconnect() {
+    // 如果已经断开，直接返回
+    if (!connected_) {
+        return;
+    }
+
+    // 主动断开，需要等待接收任务退出
+    DoDisconnect(true);
+}
+
+void EspTcp::DoDisconnect(bool wait_for_task) {
     connected_ = false;
 
     if (tcp_fd_ != -1) {
         close(tcp_fd_);
         tcp_fd_ = -1;
 
-        auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-        if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
-            ESP_LOGE(TAG, "Failed to wait for receive task exit");
+        // 只有主动断开时才需要等待接收任务退出
+        // 被动断开时，当前就是接收任务，不需要等待
+        if (wait_for_task) {
+            auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+            if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
+                ESP_LOGE(TAG, "Failed to wait for receive task exit");
+            }
         }
+    }
+
+    // 断开连接时触发断开回调
+    if (disconnect_callback_) {
+        disconnect_callback_();
     }
 }
 
@@ -93,18 +112,18 @@ int EspTcp::Send(const std::string& data) {
     size_t total_sent = 0;
     size_t data_size = data.size();
     const char* data_ptr = data.data();
-    
+
     while (total_sent < data_size) {
         int ret = send(tcp_fd_, data_ptr + total_sent, data_size - total_sent, 0);
-        
+
         if (ret <= 0) {
             ESP_LOGE(TAG, "Send failed: ret=%d, errno=%d", ret, errno);
             return ret;
         }
-        
+
         total_sent += ret;
     }
-    
+
     return total_sent;
 }
 
@@ -117,11 +136,8 @@ void EspTcp::ReceiveTask() {
             if (ret < 0) {
                 ESP_LOGE(TAG, "TCP receive failed: %d", ret);
             }
-            connected_ = false;
-            // 接收失败或连接断开时调用断连回调
-            if (disconnect_callback_) {
-                disconnect_callback_();
-            }
+            // 被动断开，不需要等待接收任务退出（当前就是接收任务）
+            DoDisconnect(false);
             break;
         }
 
