@@ -27,6 +27,9 @@ private:
     int last_error_ = 0;
 
     void ReceiveTask();
+    // 内部断开处理函数
+    // wait_for_task: 是否等待接收任务退出（主动断开为true，被动断开为false）
+    void DoDisconnect(bool wait_for_task);
 };
 
 #endif // _ESP_TCP_H_
