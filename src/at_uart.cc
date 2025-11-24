@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
 #include <sstream>
 
 #define TAG "AtUart"
@@ -301,8 +302,11 @@ void AtUart::HandleUrc(const std::string& command, const std::vector<AtArgumentV
     }
 }
 
-bool AtUart::DetectBaudRate() {
+bool AtUart::DetectBaudRate(int timeout_ms) {
     int baud_rates[] = {115200, 921600, 460800, 230400, 57600, 38400, 19200, 9600};
+    TickType_t start_time = xTaskGetTickCount();
+    TickType_t timeout_ticks = (timeout_ms == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    
     while (true) {
         ESP_LOGI(TAG, "Detecting baud rate...");
         for (size_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
@@ -314,13 +318,23 @@ bool AtUart::DetectBaudRate() {
                 return true;
             }
         }
+        
+        // Check timeout before delay if specified
+        if (timeout_ms != -1) {
+            TickType_t elapsed = xTaskGetTickCount() - start_time;
+            if (elapsed >= timeout_ticks) {
+                ESP_LOGE(TAG, "Baud rate detection timeout");
+                return false;
+            }
+        }
+        
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     return false;
 }
 
-bool AtUart::SetBaudRate(int new_baud_rate) {
-    if (!DetectBaudRate()) {
+bool AtUart::SetBaudRate(int new_baud_rate, int timeout_ms) {
+    if (!DetectBaudRate(timeout_ms)) {
         ESP_LOGE(TAG, "Failed to detect baud rate");
         return false;
     }

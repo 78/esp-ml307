@@ -66,7 +66,7 @@ public:
     void Initialize();
     
     // 波特率管理
-    bool SetBaudRate(int new_baud_rate);
+    bool SetBaudRate(int new_baud_rate, int timeout_ms = -1);
     int GetBaudRate() const { return baud_rate_; }
     
     // 数据发送
@@ -124,7 +124,7 @@ private:
     void EventTask();
     void ReceiveTask();
     bool ParseResponse();
-    bool DetectBaudRate();
+    bool DetectBaudRate(int timeout_ms = -1);
     // 处理 URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
     bool SendData(const char* data, size_t length);

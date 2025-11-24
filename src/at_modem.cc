@@ -9,18 +9,18 @@
 
 static const char* TAG = "AtModem";
 
-std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, int baud_rate) {
+std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, int baud_rate, int timeout_ms) {
     // 调用带 RI pin 的版本，RI pin 默认为 GPIO_NUM_NC
-    return Detect(tx_pin, rx_pin, dtr_pin, GPIO_NUM_NC, baud_rate);
+    return Detect(tx_pin, rx_pin, dtr_pin, GPIO_NUM_NC, baud_rate, timeout_ms);
 }
 
-std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate) {
+std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate, int timeout_ms) {
     // 创建AtUart进行检测
     auto uart = std::make_shared<AtUart>(tx_pin, rx_pin, dtr_pin, ri_pin);
     uart->Initialize();
     
     // 设置波特率
-    if (!uart->SetBaudRate(baud_rate)) {
+    if (!uart->SetBaudRate(baud_rate, timeout_ms)) {
         return nullptr;
     }
     
