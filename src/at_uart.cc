@@ -225,8 +225,10 @@ bool AtUart::ParseResponse() {
         return true;
     }
 
-    ESP_LOGD(TAG, "<< %.64s (%u bytes) [%02x%02x%02x]", rx_buffer_.substr(0, end_pos).c_str(), end_pos,
-        rx_buffer_[0], rx_buffer_[1], rx_buffer_[2]);
+    if (debug_) {
+        ESP_LOGI(TAG, "<< %.64s (%u bytes) [%02x%02x%02x]", rx_buffer_.substr(0, end_pos).c_str(), end_pos,
+            rx_buffer_[0], rx_buffer_[1], rx_buffer_[2]);
+    }
     // print last 64 bytes before end_pos if available
     // if (end_pos > 64) {
     //     ESP_LOGI(TAG, "<< LAST: %.64s", rx_buffer_.c_str() + end_pos - 64);
@@ -368,7 +370,9 @@ bool AtUart::SendData(const char* data, size_t length) {
 
 bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, bool add_crlf, const char* data, size_t data_length) {
     std::lock_guard<std::mutex> lock(command_mutex_);
-    ESP_LOGD(TAG, ">> %.64s (%u bytes)", command.data(), command.length());
+    if (debug_) {
+        ESP_LOGI(TAG, ">> %.64s (%u bytes)", command.data(), command.length());
+    }
 
     xEventGroupClearBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR);
     wait_for_response_ = true;
@@ -432,7 +436,9 @@ void AtUart::UnregisterUrcCallback(std::list<UrcCallback>::iterator iterator) {
 
 void AtUart::SetDtrPin(bool high) {
     if (dtr_pin_ != GPIO_NUM_NC) {
-        ESP_LOGD(TAG, "Set DTR pin %d to %d", dtr_pin_, high ? 1 : 0);
+        if (debug_) {
+            ESP_LOGI(TAG, "Set DTR pin %d to %d", dtr_pin_, high ? 1 : 0);
+        }
         gpio_set_level(dtr_pin_, high ? 1 : 0);
         dtr_pin_state_ = high;  // 记录DTR pin的状态
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -474,6 +480,10 @@ std::string AtUart::DecodeHex(const std::string& data) {
     std::string decoded;
     DecodeHexAppend(decoded, data.c_str(), data.size());
     return decoded;
+}
+
+void AtUart::SetDebug(bool enable) {
+    debug_ = enable;
 }
 
 // RI pin ISR handler (runs in IRAM)
