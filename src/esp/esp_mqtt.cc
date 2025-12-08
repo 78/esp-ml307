@@ -21,6 +21,7 @@ bool EspMqtt::Connect(const std::string broker_address, int broker_port, const s
     }
 
     esp_mqtt_client_config_t mqtt_config = {};
+    mqtt_config.task.stack_size = 4096;
     mqtt_config.broker.address.hostname = broker_address.c_str();
     mqtt_config.broker.address.port = broker_port;
     if (broker_port == 8883) {
