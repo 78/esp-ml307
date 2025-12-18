@@ -128,10 +128,10 @@ int EspTcp::Send(const std::string& data) {
 }
 
 void EspTcp::ReceiveTask() {
-    std::string data;
+    char* data = (char*)malloc(1500);
+    assert(data != nullptr);
     while (connected_) {
-        data.resize(1500);
-        int ret = recv(tcp_fd_, data.data(), data.size(), 0);
+        int ret = recv(tcp_fd_, data, sizeof(data), 0);
         if (ret <= 0) {
             if (ret < 0) {
                 ESP_LOGE(TAG, "TCP receive failed: %d", ret);
@@ -142,10 +142,10 @@ void EspTcp::ReceiveTask() {
         }
 
         if (stream_callback_) {
-            data.resize(ret);
-            stream_callback_(data);
+            stream_callback_(std::string(data, ret));
         }
     }
+    free(data);
 }
 
 int EspTcp::GetLastError() {

@@ -116,10 +116,10 @@ int EspSsl::Send(const std::string& data) {
 }
 
 void EspSsl::ReceiveTask() {
-    std::string data;
+    char* data = (char*)malloc(1500);
+    assert(data != nullptr);
     while (connected_) {
-        data.resize(1500);
-        int ret = esp_tls_conn_read(tls_client_, data.data(), data.size());
+        int ret = esp_tls_conn_read(tls_client_, data, sizeof(data));
 
         if (ret == ESP_TLS_ERR_SSL_WANT_READ) {
             continue;
@@ -138,10 +138,10 @@ void EspSsl::ReceiveTask() {
         }
         
         if (stream_callback_) {
-            data.resize(ret);
-            stream_callback_(data);
+            stream_callback_(std::string(data, ret));
         }
     }
+    free(data);
 }
 
 int EspSsl::GetLastError() {

@@ -98,20 +98,20 @@ int EspUdp::Send(const std::string& data) {
 }
 
 void EspUdp::ReceiveTask() {
-    std::string data;
+    char* data = (char*)malloc(1500);
+    assert(data != nullptr);
     while (connected_) {
-        data.resize(1500);
-        int ret = recv(udp_fd_, data.data(), data.size(), 0);
+        int ret = recv(udp_fd_, data, sizeof(data), 0);
         if (ret <= 0) {
             connected_ = false;
             break;
         }
         
         if (message_callback_) {
-            data.resize(ret);
-            message_callback_(data);
+            message_callback_(std::string(data, ret));
         }
     }
+    free(data);
 }
 
 int EspUdp::GetLastError() {
