@@ -8,6 +8,9 @@ static const char *TAG = "EspSsl";
 
 EspSsl::EspSsl() {
     event_group_ = xEventGroupCreate();
+
+    data_ = (char*)malloc(data_size_);
+    assert(data_ != nullptr);
 }
 
 EspSsl::~EspSsl() {
@@ -16,6 +19,10 @@ EspSsl::~EspSsl() {
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
+    }
+
+    if (data_ != nullptr) {
+        free(data_);
     }
 }
 
@@ -116,10 +123,8 @@ int EspSsl::Send(const std::string& data) {
 }
 
 void EspSsl::ReceiveTask() {
-    char* data = (char*)malloc(1500);
-    assert(data != nullptr);
     while (connected_) {
-        int ret = esp_tls_conn_read(tls_client_, data, sizeof(data));
+        int ret = esp_tls_conn_read(tls_client_, data_, data_size_);
 
         if (ret == ESP_TLS_ERR_SSL_WANT_READ) {
             continue;
@@ -138,10 +143,9 @@ void EspSsl::ReceiveTask() {
         }
         
         if (stream_callback_) {
-            stream_callback_(std::string(data, ret));
+            stream_callback_(std::string(data_, ret));
         }
     }
-    free(data);
 }
 
 int EspSsl::GetLastError() {

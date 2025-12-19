@@ -12,6 +12,9 @@ static const char *TAG = "EspTcp";
 
 EspTcp::EspTcp() {
     event_group_ = xEventGroupCreate();
+
+    data_ = (char*)malloc(data_size_);
+    assert(data_ != nullptr);
 }
 
 EspTcp::~EspTcp() {
@@ -20,6 +23,10 @@ EspTcp::~EspTcp() {
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
+    }
+
+    if (data_ != nullptr) {
+        free(data_);
     }
 }
 
@@ -128,10 +135,8 @@ int EspTcp::Send(const std::string& data) {
 }
 
 void EspTcp::ReceiveTask() {
-    char* data = (char*)malloc(1500);
-    assert(data != nullptr);
     while (connected_) {
-        int ret = recv(tcp_fd_, data, sizeof(data), 0);
+        int ret = recv(tcp_fd_, data_, data_size_, 0);
         if (ret <= 0) {
             if (ret < 0) {
                 ESP_LOGE(TAG, "TCP receive failed: %d", ret);
@@ -142,10 +147,9 @@ void EspTcp::ReceiveTask() {
         }
 
         if (stream_callback_) {
-            stream_callback_(std::string(data, ret));
+            stream_callback_(std::string(data_, ret));
         }
     }
-    free(data);
 }
 
 int EspTcp::GetLastError() {

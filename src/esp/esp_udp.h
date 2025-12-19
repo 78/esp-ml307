@@ -25,6 +25,9 @@ private:
     TaskHandle_t receive_task_handle_ = nullptr;
     int last_error_ = 0;
 
+    char* data_ = nullptr;
+    int data_size_ = 1500;
+
     void ReceiveTask();
 };
 
