@@ -28,6 +28,9 @@ AtUart::AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_nu
 }
 
 AtUart::~AtUart() {
+    if (receive_task_handle_) {
+        vTaskDelete(receive_task_handle_);
+    }
     if (event_task_handle_) {
         vTaskDelete(event_task_handle_);
     }
