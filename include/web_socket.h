@@ -4,8 +4,9 @@
 #include <functional>
 #include <string>
 #include <map>
-#include <thread>
+#include <vector>
 #include <mutex>
+#include <memory>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
@@ -57,6 +58,10 @@ private:
     std::function<void(int)> on_error_;
     std::function<void()> on_connected_;
     std::function<void()> on_disconnected_;
+
+    std::vector<char> current_message_;
+    bool is_fragmented_ = false;
+    bool is_binary_ = false;
 
     void OnTcpData(const std::string& data);
     bool SendControlFrame(uint8_t opcode, const void* data, size_t len);

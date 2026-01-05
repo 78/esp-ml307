@@ -311,12 +311,8 @@ void WebSocket::OnTcpData(const std::string& data) {
     }
     
     // 处理WebSocket帧
-    static std::vector<char> current_message;
-    static bool is_fragmented = false;
-    static bool is_binary = false;
-    
     size_t buffer_offset = 0;
-    const char* buffer = receive_buffer_.c_str();
+    const uint8_t* buffer = reinterpret_cast<const uint8_t*>(receive_buffer_.data());
     size_t buffer_size = receive_buffer_.size();
     
     while (buffer_offset < buffer_size) {
@@ -330,7 +326,7 @@ void WebSocket::OnTcpData(const std::string& data) {
         size_t header_length = 2;
         if (payload_length == 126) {
             if (buffer_size - buffer_offset < 4) break; // 需要更多数据
-            payload_length = (buffer[buffer_offset + 2] << 8) | buffer[buffer_offset + 3];
+            payload_length = (static_cast<uint64_t>(buffer[buffer_offset + 2]) << 8) | buffer[buffer_offset + 3];
             header_length += 2;
         } else if (payload_length == 127) {
             if (buffer_size - buffer_offset < 10) break; // 需要更多数据
@@ -352,10 +348,12 @@ void WebSocket::OnTcpData(const std::string& data) {
 
         // 解码有效载荷
         std::vector<char> payload(payload_length);
-        memcpy(payload.data(), buffer + buffer_offset + header_length, payload_length);
-        if (mask) {
-            for (size_t i = 0; i < payload_length; ++i) {
-                payload[i] ^= mask_key[i % 4];
+        if (payload_length > 0) {
+            memcpy(payload.data(), buffer + buffer_offset + header_length, payload_length);
+            if (mask) {
+                for (size_t i = 0; i < payload_length; ++i) {
+                    payload[i] ^= mask_key[i % 4];
+                }
             }
         }
 
@@ -364,22 +362,22 @@ void WebSocket::OnTcpData(const std::string& data) {
             case 0x0: // 延续帧
             case 0x1: // 文本帧
             case 0x2: // 二进制帧
-                if (opcode != 0x0 && is_fragmented) {
+                if (opcode != 0x0 && is_fragmented_) {
                     ESP_LOGE(TAG, "Received new message frame while still fragmenting");
                     break;
                 }
                 if (opcode != 0x0) {
-                    is_fragmented = !fin;
-                    is_binary = (opcode == 0x2);
-                    current_message.clear();
+                    is_fragmented_ = !fin;
+                    is_binary_ = (opcode == 0x2);
+                    current_message_.clear();
                 }
-                current_message.insert(current_message.end(), payload.begin(), payload.end());
+                current_message_.insert(current_message_.end(), payload.begin(), payload.end());
                 if (fin) {
                     if (on_data_) {
-                        on_data_(current_message.data(), current_message.size(), is_binary);
+                        on_data_(current_message_.data(), current_message_.size(), is_binary_);
                     }
-                    current_message.clear();
-                    is_fragmented = false;
+                    current_message_.clear();
+                    is_fragmented_ = false;
                 }
                 break;
             case 0x8: // 关闭帧
@@ -389,9 +387,7 @@ void WebSocket::OnTcpData(const std::string& data) {
                 }
                 break;
             case 0x9: // Ping
-                std::thread([this, payload, payload_length]() {
-                    SendControlFrame(0xA, payload.data(), payload_length);
-                }).detach();
+                SendControlFrame(0xA, payload.data(), payload_length);
                 break;
             case 0xA: // Pong
                 break;
