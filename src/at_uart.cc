@@ -11,14 +11,18 @@
 
 #define TAG "AtUart"
 
+// RX data item for queue - stores the buffer pointer for later return
+struct RxDataItem {
+    UartUhci::RxBuffer* buffer;
+    size_t size;
+};
 
 // AtUart 构造函数实现
 AtUart::AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin)
     : tx_pin_(tx_pin), rx_pin_(rx_pin), dtr_pin_(dtr_pin), ri_pin_(ri_pin), uart_num_(UART_NUM),
       baud_rate_(115200), initialized_(false), dtr_pin_state_(false),
       pm_lock_(nullptr), ri_pm_lock_(nullptr), ri_pm_lock_acquired_(false),
-      event_task_handle_(nullptr), receive_task_handle_(nullptr),
-      event_queue_handle_(nullptr), event_group_handle_(nullptr) {
+      receive_task_handle_(nullptr), rx_data_queue_(nullptr), event_group_handle_(nullptr) {
     // Create power management lock for DTR operations
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "at_uart_pm_lock", &pm_lock_);
     // Create power management lock for RI pin operations
@@ -31,18 +35,26 @@ AtUart::~AtUart() {
     if (receive_task_handle_) {
         vTaskDelete(receive_task_handle_);
     }
-    if (event_task_handle_) {
-        vTaskDelete(event_task_handle_);
-    }
     if (event_group_handle_) {
         vEventGroupDelete(event_group_handle_);
+    }
+    if (rx_data_queue_) {
+        // Clean up any remaining items in queue - return buffers to pool
+        RxDataItem item;
+        while (xQueueReceive(rx_data_queue_, &item, 0) == pdTRUE) {
+            if (item.buffer) {
+                uart_uhci_.ReturnBuffer(item.buffer);
+            }
+        }
+        vQueueDelete(rx_data_queue_);
     }
     if (initialized_) {
         // Remove RI pin ISR handler if configured
         if (ri_pin_ != GPIO_NUM_NC) {
             gpio_isr_handler_remove(ri_pin_);
         }
-        uart_driver_delete(uart_num_);
+        // Deinitialize UHCI
+        uart_uhci_.Deinit();
     }
     if (ri_pm_lock_) {
         if (ri_pm_lock_acquired_) {
@@ -66,6 +78,14 @@ void AtUart::Initialize() {
         return;
     }
 
+    // Create RX data queue
+    rx_data_queue_ = xQueueCreate(16, sizeof(RxDataItem));
+    if (!rx_data_queue_) {
+        ESP_LOGE(TAG, "创建RX数据队列失败");
+        return;
+    }
+
+    // Configure UART parameters (no driver install, UHCI will take over)
     uart_config_t uart_config = {};
     uart_config.baud_rate = baud_rate_;
     uart_config.data_bits = UART_DATA_8_BITS;
@@ -73,9 +93,37 @@ void AtUart::Initialize() {
     uart_config.stop_bits = UART_STOP_BITS_1;
     uart_config.source_clk = UART_SCLK_DEFAULT;
     
-    ESP_ERROR_CHECK(uart_driver_install(uart_num_, 8192, 0, 100, &event_queue_handle_, ESP_INTR_FLAG_IRAM));
     ESP_ERROR_CHECK(uart_param_config(uart_num_, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(uart_num_, tx_pin_, rx_pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    
+    // Enable pull-up on RX pin
+    gpio_set_pull_mode(rx_pin_, GPIO_PULLUP_ONLY);
+    
+    // Initialize UHCI DMA controller
+    UartUhci::Config uhci_cfg = {
+        .uart_port = uart_num_,
+        .dma_burst_size = 32,
+        .rx_pool = {
+            .buffer_count = AT_UART_RX_BUFFER_COUNT,
+            .buffer_size = AT_UART_RX_BUFFER_SIZE,
+        },
+    };
+    
+    esp_err_t ret = uart_uhci_.Init(uhci_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "UHCI初始化失败: %s", esp_err_to_name(ret));
+        return;
+    }
+    
+    // Register DMA RX callback
+    uart_uhci_.SetRxCallback(DmaRxCallback, this);
+    
+    // Start DMA receive
+    ret = uart_uhci_.StartReceive();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "启动DMA接收失败: %s", esp_err_to_name(ret));
+        return;
+    }
     
     if (dtr_pin_ != GPIO_NUM_NC) {
         gpio_config_t config = {};
@@ -107,68 +155,57 @@ void AtUart::Initialize() {
 
     xTaskCreatePinnedToCore([](void* arg) {
         auto ml307_at_modem = (AtUart*)arg;
-        ml307_at_modem->EventTask();
-        vTaskDelete(NULL);
-    }, "modem_event", 2048, this, configMAX_PRIORITIES - 1, &event_task_handle_, 0);
-
-    xTaskCreatePinnedToCore([](void* arg) {
-        auto ml307_at_modem = (AtUart*)arg;
         ml307_at_modem->ReceiveTask();
         vTaskDelete(NULL);
     }, "modem_receive", 2048 * 3, this, configMAX_PRIORITIES - 2, &receive_task_handle_, 0);
     initialized_ = true;
 }
 
-void AtUart::EventTask() {
-    uart_event_t event;
-    while (true) {
-        if (xQueueReceive(event_queue_handle_, &event, portMAX_DELAY) == pdTRUE) {
-            switch (event.type)
-            {
-            case UART_DATA:
-                xEventGroupSetBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE);
-                break;
-            case UART_BREAK:
-                xEventGroupSetBits(event_group_handle_, AT_EVENT_BREAK);
-                break;
-            case UART_BUFFER_FULL:
-                xEventGroupSetBits(event_group_handle_, AT_EVENT_BUFFER_FULL);
-                break;
-            case UART_FIFO_OVF:
-                xEventGroupSetBits(event_group_handle_, AT_EVENT_FIFO_OVF);
-                break;
-            default:
-                ESP_LOGE(TAG, "unknown event type: %d", event.type);
-                break;
-            }
+// DMA RX callback (called from ISR context)
+bool IRAM_ATTR AtUart::DmaRxCallback(const UartUhci::RxEventData& data, void* user_data) {
+    AtUart* self = static_cast<AtUart*>(user_data);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    
+    if (data.buffer && data.recv_size > 0) {
+        // Send buffer pointer to queue for processing in task context
+        // The buffer will be returned by ReceiveTask after processing
+        RxDataItem item;
+        item.buffer = data.buffer;
+        item.size = data.recv_size;
+        
+        if (xQueueSendFromISR(self->rx_data_queue_, &item, &xHigherPriorityTaskWoken) == pdTRUE) {
+            // Signal data available
+            xEventGroupSetBitsFromISR(self->event_group_handle_, AT_EVENT_DATA_AVAILABLE, &xHigherPriorityTaskWoken);
+        } else {
+            // Queue full, return buffer immediately
+            self->uart_uhci_.ReturnBuffer(data.buffer);
         }
+    } else if (data.buffer) {
+        // Empty buffer, return immediately
+        self->uart_uhci_.ReturnBuffer(data.buffer);
     }
+    
+    return xHigherPriorityTaskWoken == pdTRUE;
 }
 
 void AtUart::ReceiveTask() {
     while (true) {
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_FIFO_OVF |
-            AT_EVENT_BUFFER_FULL | AT_EVENT_BREAK | AT_EVENT_RI_PIN_INT, pdTRUE, pdFALSE, portMAX_DELAY);
+        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_RI_PIN_INT,
+            pdTRUE, pdFALSE, portMAX_DELAY);
+        
         if (bits & AT_EVENT_DATA_AVAILABLE) {
-            size_t available;
-            uart_get_buffered_data_len(uart_num_, &available);
-            if (available > 0) {
-                // Extend rx_buffer_ and read into buffer
-                rx_buffer_.resize(rx_buffer_.size() + available);
-                char* rx_buffer_ptr = &rx_buffer_[rx_buffer_.size() - available];
-                uart_read_bytes(uart_num_, rx_buffer_ptr, available, portMAX_DELAY);
+            // Process all queued data
+            RxDataItem item;
+            while (xQueueReceive(rx_data_queue_, &item, 0) == pdTRUE) {
+                if (item.buffer && item.size > 0) {
+                    // Append to rx_buffer_
+                    rx_buffer_.append(reinterpret_cast<char*>(item.buffer->data), item.size);
+                    
+                    // Return buffer to UHCI pool
+                    uart_uhci_.ReturnBuffer(item.buffer);
+                }
                 while (ParseResponse()) {}
             }
-        }
-        if (bits & AT_EVENT_FIFO_OVF) {
-            ESP_LOGE(TAG, "FIFO overflow");
-            HandleUrc("FIFO_OVERFLOW", {});
-        }
-        if (bits & AT_EVENT_BREAK) {
-            ESP_LOGE(TAG, "Break");
-        }
-        if (bits & AT_EVENT_BUFFER_FULL) {
-            ESP_LOGE(TAG, "Buffer full");
         }
 
         if (ri_pin_ != GPIO_NUM_NC) {
@@ -363,9 +400,9 @@ bool AtUart::SendData(const char* data, size_t length) {
         return false;
     }
     
-    int ret = uart_write_bytes(uart_num_, data, length);
-    if (ret < 0) {
-        ESP_LOGE(TAG, "uart_write_bytes failed: %d", ret);
+    esp_err_t ret = uart_uhci_.Transmit(reinterpret_cast<const uint8_t*>(data), length);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "UHCI transmit failed: %s", esp_err_to_name(ret));
         return false;
     }
     return true;
