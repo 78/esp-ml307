@@ -17,19 +17,21 @@
 #include <esp_pm.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
+#include <uart_uhci.h>
 
 // UART事件定义
 #define AT_EVENT_DATA_AVAILABLE BIT1
 #define AT_EVENT_COMMAND_DONE   BIT2
 #define AT_EVENT_COMMAND_ERROR  BIT3
-#define AT_EVENT_BUFFER_FULL    BIT4
-#define AT_EVENT_FIFO_OVF       BIT5
-#define AT_EVENT_BREAK          BIT6
-#define AT_EVENT_RI_PIN_INT     BIT7  // RI pin interrupt event
+#define AT_EVENT_RI_PIN_INT     BIT4  // RI pin interrupt event
 #define AT_EVENT_UNKNOWN        BIT8
 
 // 默认配置
 #define UART_NUM                UART_NUM_1
+
+// DMA 缓冲区配置
+#define AT_UART_RX_BUFFER_COUNT 4
+#define AT_UART_RX_BUFFER_SIZE  2048
 
 // AT命令参数值结构
 struct AtArgumentValue {
@@ -111,10 +113,12 @@ private:
     esp_pm_lock_handle_t ri_pm_lock_;  // RI pin PM lock
     bool ri_pm_lock_acquired_;  // Track RI PM lock state
     
+    // DMA controller
+    UartUhci uart_uhci_;
+    
     // FreeRTOS 对象
-    TaskHandle_t event_task_handle_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
-    QueueHandle_t event_queue_handle_;
+    QueueHandle_t rx_data_queue_;  // Queue for DMA received data
     EventGroupHandle_t event_group_handle_;
     
     std::string rx_buffer_;
@@ -123,13 +127,15 @@ private:
     std::list<UrcCallback> urc_callbacks_;
     
     // 内部方法
-    void EventTask();
     void ReceiveTask();
     bool ParseResponse();
     bool DetectBaudRate(int timeout_ms = -1);
     // 处理 URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
     bool SendData(const char* data, size_t length);
+    
+    // DMA RX callback (called from ISR context)
+    static bool IRAM_ATTR DmaRxCallback(const UartUhci::RxEventData& data, void* user_data);
     
     // RI pin ISR handler
     static void IRAM_ATTR RiPinIsrHandler(void* arg);
