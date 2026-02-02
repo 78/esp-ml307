@@ -19,21 +19,21 @@
 #include <esp_sleep.h>
 #include <uart_uhci.h>
 
-// UART事件定义
-#define AT_EVENT_DATA_AVAILABLE BIT1
-#define AT_EVENT_COMMAND_DONE   BIT2
-#define AT_EVENT_COMMAND_ERROR  BIT3
-#define AT_EVENT_RI_PIN_INT     BIT4  // RI pin interrupt event
-#define AT_EVENT_UNKNOWN        BIT8
+// UART Events
+#define AT_EVENT_COMMAND_DONE   BIT1
+#define AT_EVENT_COMMAND_ERROR  BIT2
+#define AT_EVENT_RI_PIN_INT     BIT3  // RI pin interrupt event
+#define AT_EVENT_FIFO_OVERFLOW  BIT4  // DMA buffer overflow event
+#define AT_EVENT_PARSE_NEEDED   BIT5  // Signal EventTask to parse response
 
-// 默认配置
+// Default Configuration
 #define UART_NUM                UART_NUM_1
 
-// DMA 缓冲区配置
-#define AT_UART_RX_BUFFER_COUNT 4
-#define AT_UART_RX_BUFFER_SIZE  2048
+// DMA Buffer Configuration, OTA upgrade will use up to 6 Buffers
+#define AT_UART_RX_BUFFER_COUNT 12
+#define AT_UART_RX_BUFFER_SIZE  512
 
-// AT命令参数值结构
+// AT Command Argument Value Structure
 struct AtArgumentValue {
     enum class Type { String, Int, Double };
     Type type;
@@ -55,33 +55,31 @@ struct AtArgumentValue {
     }
 };
 
-// 数据接收回调函数类型
+// Data Receive Callback Function Type
 typedef std::function<void(const std::string& command, const std::vector<AtArgumentValue>& arguments)> UrcCallback;
 
 class AtUart {
 public:
-    // 构造函数
     AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin = GPIO_NUM_NC, gpio_num_t ri_pin = GPIO_NUM_NC);
     ~AtUart();
 
-    // 初始化和配置
     void Initialize();
     
-    // 波特率管理
+    // Baud Rate Management
     bool SetBaudRate(int new_baud_rate, int timeout_ms = -1);
     int GetBaudRate() const { return baud_rate_; }
     
-    // 数据发送
+    // Data Sending
     bool SendCommand(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true);
     bool SendCommandWithData(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true, const char* data = nullptr, size_t data_length = 0);
     std::string GetResponse() const;
     int GetCmeErrorCode() const { return cme_error_code_; }
     
-    // 回调管理
+    // Callback Management
     std::list<UrcCallback>::iterator RegisterUrcCallback(UrcCallback callback);
     void UnregisterUrcCallback(std::list<UrcCallback>::iterator iterator);
     
-    // 控制接口
+    // Control Interface
     void SetDtrPin(bool high);
     bool GetDtrPin() const { return dtr_pin_state_; }
     bool IsInitialized() const { return initialized_; }
@@ -93,7 +91,6 @@ public:
     void DecodeHexAppend(std::string& dest, const char* data, size_t length);
 
 private:
-    // 配置参数
     gpio_num_t tx_pin_;
     gpio_num_t rx_pin_;
     gpio_num_t dtr_pin_;
@@ -101,13 +98,14 @@ private:
     uart_port_t uart_num_;
     int baud_rate_;
     bool initialized_;
-    bool dtr_pin_state_;  // 记录DTR pin的当前状态
+    bool dtr_pin_state_;  // Record the current state of the DTR pin
     bool debug_ = false;  // Debug mode flag
     int cme_error_code_ = 0;
     std::string response_;
     bool wait_for_response_ = false;
     std::mutex command_mutex_;
     mutable std::mutex mutex_;
+    mutable std::mutex urc_mutex_;  // Independent mutex for urc_callbacks_
     std::mutex dtr_mutex_;
     esp_pm_lock_handle_t pm_lock_;
     esp_pm_lock_handle_t ri_pm_lock_;  // RI pin PM lock
@@ -116,28 +114,34 @@ private:
     // DMA controller
     UartUhci uart_uhci_;
     
-    // FreeRTOS 对象
+    // FreeRTOS Objects
     TaskHandle_t receive_task_handle_ = nullptr;
+    TaskHandle_t event_task_handle_ = nullptr;  // Task for parsing and event handling
     QueueHandle_t rx_data_queue_;  // Queue for DMA received data
     EventGroupHandle_t event_group_handle_;
     
     std::string rx_buffer_;
+    std::mutex rx_buffer_mutex_;  // Mutex to protect rx_buffer_ access
     
-    // 回调函数
+    // Callback Functions
     std::list<UrcCallback> urc_callbacks_;
     
-    // 内部方法
-    void ReceiveTask();
+    // Internal Methods
+    void ReceiveTask();   // Task for receiving data from DMA queue
+    void EventTask();     // Task for parsing response and handling events
     bool ParseResponse();
     bool DetectBaudRate(int timeout_ms = -1);
-    // 处理 URC
+    // Handle URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
     bool SendData(const char* data, size_t length);
     
-    // DMA RX callback (called from ISR context)
+    // DMA RX Callback (called from ISR context)
     static bool IRAM_ATTR DmaRxCallback(const UartUhci::RxEventData& data, void* user_data);
     
-    // RI pin ISR handler
+    // DMA Overflow Callback (called from ISR context when buffer exhaustion detected)
+    static bool IRAM_ATTR DmaOverflowCallback(void* user_data);
+    
+    // RI Pin ISR Handler
     static void IRAM_ATTR RiPinIsrHandler(void* arg);
 
     friend class DtrGuard;

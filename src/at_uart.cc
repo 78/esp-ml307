@@ -35,6 +35,9 @@ AtUart::~AtUart() {
     if (receive_task_handle_) {
         vTaskDelete(receive_task_handle_);
     }
+    if (event_task_handle_) {
+        vTaskDelete(event_task_handle_);
+    }
     if (event_group_handle_) {
         vEventGroupDelete(event_group_handle_);
     }
@@ -118,6 +121,9 @@ void AtUart::Initialize() {
     // Register DMA RX callback
     uart_uhci_.SetRxCallback(DmaRxCallback, this);
     
+    // Register DMA overflow callback
+    uart_uhci_.SetOverflowCallback(DmaOverflowCallback, this);
+    
     // Start DMA receive
     ret = uart_uhci_.StartReceive();
     if (ret != ESP_OK) {
@@ -153,11 +159,20 @@ void AtUart::Initialize() {
         gpio_isr_handler_add(ri_pin_, RiPinIsrHandler, this);
     }
 
-    xTaskCreatePinnedToCore([](void* arg) {
-        auto ml307_at_modem = (AtUart*)arg;
-        ml307_at_modem->ReceiveTask();
+    // ReceiveTask: high priority, only handles DMA data reception
+    xTaskCreate([](void* arg) {
+        auto at_uart = (AtUart*)arg;
+        at_uart->ReceiveTask();
         vTaskDelete(NULL);
-    }, "modem_receive", 2048 * 3, this, configMAX_PRIORITIES - 2, &receive_task_handle_, 0);
+    }, "modem_receive", 1024, this, configMAX_PRIORITIES - 2, &receive_task_handle_);
+
+    // EventTask: lower priority, handles parsing and URC callbacks
+    xTaskCreate([](void* arg) {
+        auto at_uart = (AtUart*)arg;
+        at_uart->EventTask();
+        vTaskDelete(NULL);
+    }, "modem_event", 2048 * 3, this, configMAX_PRIORITIES - 3, &event_task_handle_);
+
     initialized_ = true;
 }
 
@@ -173,39 +188,70 @@ bool IRAM_ATTR AtUart::DmaRxCallback(const UartUhci::RxEventData& data, void* us
         item.buffer = data.buffer;
         item.size = data.recv_size;
         
-        if (xQueueSendFromISR(self->rx_data_queue_, &item, &xHigherPriorityTaskWoken) == pdTRUE) {
-            // Signal data available
-            xEventGroupSetBitsFromISR(self->event_group_handle_, AT_EVENT_DATA_AVAILABLE, &xHigherPriorityTaskWoken);
-        } else {
+        if (xQueueSendFromISR(self->rx_data_queue_, &item, &xHigherPriorityTaskWoken) != pdTRUE) {
             // Queue full, return buffer immediately
+            ESP_DRAM_LOGW("AtUart", "RX queue full, dropping %u bytes", data.recv_size);
             self->uart_uhci_.ReturnBuffer(data.buffer);
         }
     } else if (data.buffer) {
         // Empty buffer, return immediately
+        ESP_DRAM_LOGW("AtUart", "Empty buffer received, size=%u", data.recv_size);
         self->uart_uhci_.ReturnBuffer(data.buffer);
     }
     
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
+// DMA overflow callback (called from ISR context when buffer exhaustion detected)
+bool IRAM_ATTR AtUart::DmaOverflowCallback(void* user_data) {
+    AtUart* self = static_cast<AtUart*>(user_data);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    
+    // Signal overflow event to ReceiveTask
+    xEventGroupSetBitsFromISR(self->event_group_handle_, AT_EVENT_FIFO_OVERFLOW, &xHigherPriorityTaskWoken);
+    
+    return xHigherPriorityTaskWoken == pdTRUE;
+}
+
 void AtUart::ReceiveTask() {
+    // This task only handles data reception from DMA queue
+    // It runs at high priority to ensure timely buffer return to UHCI pool
+    RxDataItem item;
     while (true) {
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_DATA_AVAILABLE | AT_EVENT_RI_PIN_INT,
+        // Block waiting for data from DMA queue
+        if (xQueueReceive(rx_data_queue_, &item, portMAX_DELAY) == pdTRUE) {
+            if (item.buffer && item.size > 0) {
+                // Append to rx_buffer_ with lock protection
+                {
+                    std::lock_guard<std::mutex> lock(rx_buffer_mutex_);
+                    rx_buffer_.append(reinterpret_cast<char*>(item.buffer->data), item.size);
+                }
+                // Return buffer to UHCI pool immediately
+                uart_uhci_.ReturnBuffer(item.buffer);
+                // Notify EventTask to parse response
+                xEventGroupSetBits(event_group_handle_, AT_EVENT_PARSE_NEEDED);
+            }
+        }
+    }
+}
+
+void AtUart::EventTask() {
+    // This task handles parsing and event processing
+    // It runs at lower priority so ReceiveTask can quickly return DMA buffers
+    while (true) {
+        auto bits = xEventGroupWaitBits(event_group_handle_, 
+            AT_EVENT_PARSE_NEEDED | AT_EVENT_RI_PIN_INT | AT_EVENT_FIFO_OVERFLOW,
             pdTRUE, pdFALSE, portMAX_DELAY);
         
-        if (bits & AT_EVENT_DATA_AVAILABLE) {
-            // Process all queued data
-            RxDataItem item;
-            while (xQueueReceive(rx_data_queue_, &item, 0) == pdTRUE) {
-                if (item.buffer && item.size > 0) {
-                    // Append to rx_buffer_
-                    rx_buffer_.append(reinterpret_cast<char*>(item.buffer->data), item.size);
-                    
-                    // Return buffer to UHCI pool
-                    uart_uhci_.ReturnBuffer(item.buffer);
-                }
-                while (ParseResponse()) {}
-            }
+        if (bits & AT_EVENT_PARSE_NEEDED) {
+            // Parse all available responses
+            while (ParseResponse()) {}
+        }
+        
+        if (bits & AT_EVENT_FIFO_OVERFLOW) {
+            // DMA buffer exhaustion detected - notify upper layer via URC
+            ESP_LOGW(TAG, "DMA buffer overflow detected, notifying upper layer");
+            HandleUrc("FIFO_OVERFLOW", {});
         }
 
         if (ri_pin_ != GPIO_NUM_NC) {
@@ -234,58 +280,85 @@ static bool is_number(const std::string& s) {
 }
 
 bool AtUart::ParseResponse() {
-    if (wait_for_response_ && rx_buffer_[0] == '>') {
-        rx_buffer_.erase(0, 1);
-        xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
-        return true;
-    }
-
-    auto end_pos = rx_buffer_.find("\r\n");
-    if (end_pos == std::string::npos) {
-        // FIXME: for +MHTTPURC: "ind", missing newline
-        if (rx_buffer_.size() >= 16 && memcmp(rx_buffer_.c_str(), "+MHTTPURC: \"ind\"", 16) == 0) {
-            // Find the end of this line and add \r\n if missing
-            auto next_plus = rx_buffer_.find("+", 1);
-            if (next_plus != std::string::npos) {
-                // Insert \r\n before the next + command
-                rx_buffer_.insert(next_plus, "\r\n");
-            } else {
-                // Append \r\n at the end
-                rx_buffer_.append("\r\n");
-            }
-            end_pos = rx_buffer_.find("\r\n");
-        } else {
+    std::string command, values;
+    std::string::size_type end_pos;
+    
+    // Lock rx_buffer_ for the duration of parsing
+    {
+        std::lock_guard<std::mutex> lock(rx_buffer_mutex_);
+        
+        if (rx_buffer_.empty()) {
             return false;
         }
-    }
-
-    // Ignore empty lines
-    if (end_pos == 0) {
-        rx_buffer_.erase(0, 2);
-        return true;
-    }
-
-    if (debug_) {
-        ESP_LOGI(TAG, "<< %.64s (%u bytes) [%02x%02x%02x]", rx_buffer_.substr(0, end_pos).c_str(), end_pos,
-            rx_buffer_[0], rx_buffer_[1], rx_buffer_[2]);
-    }
-    // print last 64 bytes before end_pos if available
-    // if (end_pos > 64) {
-    //     ESP_LOGI(TAG, "<< LAST: %.64s", rx_buffer_.c_str() + end_pos - 64);
-    // }
-
-    // Parse "+CME ERROR: 123,456,789"
-    if (rx_buffer_[0] == '+') {
-        std::string command, values;
-        auto pos = rx_buffer_.find(": ");
-        if (pos == std::string::npos || pos > end_pos) {
-            command = rx_buffer_.substr(1, end_pos - 1);
-        } else {
-            command = rx_buffer_.substr(1, pos - 1);
-            values = rx_buffer_.substr(pos + 2, end_pos - pos - 2);
+        
+        if (wait_for_response_ && rx_buffer_[0] == '>') {
+            rx_buffer_.erase(0, 1);
+            xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
+            return true;
         }
-        rx_buffer_.erase(0, end_pos + 2);
 
+        end_pos = rx_buffer_.find("\r\n");
+        if (end_pos == std::string::npos) {
+            // FIXME: for +MHTTPURC: "ind", missing newline
+            if (rx_buffer_.size() >= 16 && memcmp(rx_buffer_.c_str(), "+MHTTPURC: \"ind\"", 16) == 0) {
+                // Find the end of this line and add \r\n if missing
+                auto next_plus = rx_buffer_.find("+", 1);
+                if (next_plus != std::string::npos) {
+                    // Insert \r\n before the next + command
+                    rx_buffer_.insert(next_plus, "\r\n");
+                } else {
+                    // Append \r\n at the end
+                    rx_buffer_.append("\r\n");
+                }
+                end_pos = rx_buffer_.find("\r\n");
+            } else {
+                return false;
+            }
+        }
+
+        // Ignore empty lines
+        if (end_pos == 0) {
+            rx_buffer_.erase(0, 2);
+            return true;
+        }
+
+        if (debug_) {
+            ESP_LOGI(TAG, "<< %.64s (%u bytes) [%02x%02x%02x]", rx_buffer_.substr(0, end_pos).c_str(), end_pos,
+                rx_buffer_[0], rx_buffer_[1], rx_buffer_[2]);
+        }
+
+        // Parse "+CME ERROR: 123,456,789"
+        if (rx_buffer_[0] == '+') {
+            auto pos = rx_buffer_.find(": ");
+            if (pos == std::string::npos || pos > end_pos) {
+                command = rx_buffer_.substr(1, end_pos - 1);
+            } else {
+                command = rx_buffer_.substr(1, pos - 1);
+                values = rx_buffer_.substr(pos + 2, end_pos - pos - 2);
+            }
+            rx_buffer_.erase(0, end_pos + 2);
+            // Will call HandleUrc after releasing lock
+        } else if (rx_buffer_.size() >= 4 && rx_buffer_[0] == 'O' && rx_buffer_[1] == 'K' && rx_buffer_[2] == '\r' && rx_buffer_[3] == '\n') {
+            rx_buffer_.erase(0, 4);
+            xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
+            return true;
+        } else if (rx_buffer_.size() >= 7 && rx_buffer_[0] == 'E' && rx_buffer_[1] == 'R' && rx_buffer_[2] == 'R' && rx_buffer_[3] == 'O' && rx_buffer_[4] == 'R' && rx_buffer_[5] == '\r' && rx_buffer_[6] == '\n') {
+            rx_buffer_.erase(0, 7);
+            xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
+            return true;
+        } else if (rx_buffer_[0] == 0xE0) { // 4G wake up MCU, just ignore
+            rx_buffer_.erase(0, end_pos + 2);
+            return true;
+        } else {
+            std::lock_guard<std::mutex> response_lock(mutex_);
+            response_ = rx_buffer_.substr(0, end_pos);
+            rx_buffer_.erase(0, end_pos + 2);
+            return true;
+        }
+    }
+    
+    // Handle URC outside the rx_buffer_ lock to avoid blocking ReceiveTask
+    if (!command.empty()) {
         // Parse "string", int, int, ... into AtArgumentValue
         std::vector<AtArgumentValue> arguments;
         std::istringstream iss(values);
@@ -311,23 +384,8 @@ bool AtUart::ParseResponse() {
 
         HandleUrc(command, arguments);
         return true;
-    } else if (rx_buffer_.size() >= 4 && rx_buffer_[0] == 'O' && rx_buffer_[1] == 'K' && rx_buffer_[2] == '\r' && rx_buffer_[3] == '\n') {
-        rx_buffer_.erase(0, 4);
-        xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_DONE);
-        return true;
-    } else if (rx_buffer_.size() >= 7 && rx_buffer_[0] == 'E' && rx_buffer_[1] == 'R' && rx_buffer_[2] == 'R' && rx_buffer_[3] == 'O' && rx_buffer_[4] == 'R' && rx_buffer_[5] == '\r' && rx_buffer_[6] == '\n') {
-        rx_buffer_.erase(0, 7);
-        xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
-        return true;
-    } else if (rx_buffer_[0] == 0xE0) { // 4G wake up MCU, just ignore
-        rx_buffer_.erase(0, end_pos + 2);
-        return true;
-    } else {
-        std::lock_guard<std::mutex> lock(mutex_);
-        response_ = rx_buffer_.substr(0, end_pos);
-        rx_buffer_.erase(0, end_pos + 2);
-        return true;
     }
+    
     return false;
 }
 
@@ -338,7 +396,7 @@ void AtUart::HandleUrc(const std::string& command, const std::vector<AtArgumentV
         return;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(urc_mutex_);
     for (auto& callback : urc_callbacks_) {
         callback(command, arguments);
     }
@@ -465,12 +523,12 @@ std::string AtUart::GetResponse() const {
 }
 
 std::list<UrcCallback>::iterator AtUart::RegisterUrcCallback(UrcCallback callback) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(urc_mutex_);
     return urc_callbacks_.insert(urc_callbacks_.end(), callback);
 }
 
 void AtUart::UnregisterUrcCallback(std::list<UrcCallback>::iterator iterator) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(urc_mutex_);
     urc_callbacks_.erase(iterator);
 }
 
