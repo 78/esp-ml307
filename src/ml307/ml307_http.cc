@@ -88,7 +88,8 @@ int Ml307Http::Read(char* buffer, size_t buffer_size) {
     });
     
     if (!received) {
-        ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received");
+        ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received, body_offset: %u, eof: %d", 
+                 body_offset_, eof_);
         return -1;
     }
     if (!instance_active_) {

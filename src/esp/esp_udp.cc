@@ -73,7 +73,7 @@ bool EspUdp::Connect(const std::string& host, int port) {
         udp->ReceiveTask();
         xEventGroupSetBits(udp->event_group_, ESP_UDP_EVENT_RECEIVE_TASK_EXIT);
         vTaskDelete(NULL);
-    }, "udp_receive", 2048, this, 1, &receive_task_handle_);
+    }, "udp_receive", 3072, this, 1, &receive_task_handle_);
     return true;
 }
 

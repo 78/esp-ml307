@@ -1,5 +1,9 @@
 dependencies:
-  idf: '>=5.3'
+  idf: '>=5.5.2'
+  78/uart-uhci:
+    version: ~0.2.0
+    rules:
+    - if: target not in [esp32]
 description: ESP32 ML307 / EC801E / NT26K Cat.1 Cellular Module
 files:
   exclude:
@@ -8,4 +12,4 @@ files:
 license: Apache-2.0
 repository: https://github.com/78/esp-ml307
 url: https://github.com/78/esp-ml307
-version: 3.5.4
+version: 3.6.2
