@@ -26,6 +26,9 @@ private:
     TaskHandle_t receive_task_handle_ = nullptr;
     int last_error_ = 0;
 
+    char* data_ = nullptr;
+    int data_size_ = 1500;
+
     void ReceiveTask();
     // 内部断开处理函数
     // wait_for_task: 是否等待接收任务退出（主动断开为true，被动断开为false）

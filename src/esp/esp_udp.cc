@@ -12,6 +12,9 @@ static const char *TAG = "EspUdp";
 
 EspUdp::EspUdp() : udp_fd_(-1) {
     event_group_ = xEventGroupCreate();
+
+    data_ = (char*)malloc(data_size_);
+    assert(data_ != nullptr);
 }
 
 EspUdp::~EspUdp() {
@@ -20,6 +23,10 @@ EspUdp::~EspUdp() {
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
+    }
+
+    if (data_ != nullptr) {
+        free(data_);
     }
 }
 
@@ -98,18 +105,15 @@ int EspUdp::Send(const std::string& data) {
 }
 
 void EspUdp::ReceiveTask() {
-    std::string data;
     while (connected_) {
-        data.resize(1500);
-        int ret = recv(udp_fd_, data.data(), data.size(), 0);
+        int ret = recv(udp_fd_, data_, data_size_, 0);
         if (ret <= 0) {
             connected_ = false;
             break;
         }
         
         if (message_callback_) {
-            data.resize(ret);
-            message_callback_(data);
+            message_callback_(std::string(data_, ret));
         }
     }
 }
