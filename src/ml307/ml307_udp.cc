@@ -7,6 +7,7 @@
 
 Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_uart), udp_id_(udp_id) {
     event_group_handle_ = xEventGroupCreate();
+    local_port_ = 0;
 
     urc_callback_it_ = at_uart_->RegisterUrcCallback([this](const std::string& command, const std::vector<AtArgumentValue>& arguments) {
         if (command == "MIPOPEN" && arguments.size() == 2) {
@@ -65,6 +66,11 @@ Ml307Udp::~Ml307Udp() {
     }
 }
 
+bool Ml307Udp::Connect(const std::string& host, int port, int local_port) {
+    local_port_ = local_port;
+    return Connect(host, port);
+}
+
 bool Ml307Udp::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, ML307_UDP_CONNECTED | ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
@@ -87,8 +93,8 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
         }
     }
 
-    // 使用 HEX 编码
-    command = "AT+MIPCFG=\"encoding\"," + std::to_string(udp_id_) + ",1,1";
+    // Send binary receive HEX
+    command = "AT+MIPCFG=\"encoding\"," + std::to_string(udp_id_) + ",0,1";
     if (!at_uart_->SendCommand(command)) {
         ESP_LOGE(TAG, "Failed to set HEX encoding");
         return false;
@@ -100,7 +106,12 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
     }
 
     // 打开 UDP 连接
-    command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",,0";
+    if (local_port_ == 0) {
+        command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",,0";
+    } else {
+        command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ","
+         + std::to_string(local_port_) + ",0";
+    }
     if (!at_uart_->SendCommand(command)) {
         last_error_ = at_uart_->GetCmeErrorCode();
         ESP_LOGE(TAG, "Failed to open UDP connection");
@@ -127,26 +138,13 @@ void Ml307Udp::Disconnect() {
 }
 
 int Ml307Udp::Send(const std::string& data) {
-    const size_t MAX_PACKET_SIZE = 1460 / 2;
-
     if (!connected_) {
         ESP_LOGE(TAG, "Not connected");
         return -1;
     }
 
-    if (data.size() > MAX_PACKET_SIZE) {
-        ESP_LOGE(TAG, "Data chunk exceeds maximum limit");
-        return -1;
-    }
-
-    // 在循环外预先分配command
-    std::string command = "AT+MIPSEND=" + std::to_string(udp_id_) + "," + std::to_string(data.size()) + ",";
-    
-    // 直接在command字符串上进行十六进制编码
-    at_uart_->EncodeHexAppend(command, data.data(), data.size());
-    command += "\r\n";
-    
-    if (!at_uart_->SendCommand(command, 1000, false)) {
+    std::string command = "AT+MIPSEND=" + std::to_string(udp_id_) + "," + std::to_string(data.size());
+    if (!at_uart_->SendCommandWithData(command, 1000, true, data.data(), data.size())) {
         ESP_LOGE(TAG, "Failed to send data chunk");
         return -1;
     }
