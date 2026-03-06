@@ -378,6 +378,11 @@ void HttpClient::ProcessReceivedData() {
                 if (!HasCompleteLine(rx_buffer_)) return;  // 需要更多数据
 
                 std::string line = GetNextLine(rx_buffer_);
+                while (line.empty()) {
+                    // 忽略 chunk 之间可能出现的空行
+                    if (!HasCompleteLine(rx_buffer_)) return;
+                    line = GetNextLine(rx_buffer_);
+                }
 
                 chunk_size_ = ParseChunkSize(line);
                 chunk_received_ = 0;
