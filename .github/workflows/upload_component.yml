@@ -1,19 +1,19 @@
 name: Push components to Espressif Component Service
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   upload_components:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
 
       - name: Upload components to component service
-        uses: espressif/upload-components-ci-action@v1
+        uses: espressif/upload-components-ci-action@v2
         with:
-          name: "esp-ml307"
+          components: "esp-ml307: ."
           namespace: "78"
           api_token: ${{ secrets.IDF_COMPONENT_API_TOKEN }}
