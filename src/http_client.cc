@@ -180,6 +180,7 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
     // 检查是否可以复用现有连接
     bool can_reuse = IsConnectionReusable(host_, port_);
     
+    uint32_t t_connect = xTaskGetTickCount() * portTICK_PERIOD_MS;
     if (can_reuse) {
         ESP_LOGI(TAG, "Reusing existing connection to %s:%d", host_.c_str(), port_);
         // 只重置请求状态，不关闭连接（不会清空 content_）
@@ -217,9 +218,10 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
             ESP_LOGE(TAG, "TCP connection failed, code=0x%x", last_error_);
             return false;
         }
+        uint32_t t_connected = xTaskGetTickCount() * portTICK_PERIOD_MS;
         
         connected_ = true;
-        ESP_LOGI(TAG, "Established new connection to %s:%d", host_.c_str(), port_);
+        ESP_LOGI(TAG, "Established new connection to %s:%d protocol=%s cost=%u", host_.c_str(), port_, protocol_.c_str(), t_connected - t_connect);
     }
     
     request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
