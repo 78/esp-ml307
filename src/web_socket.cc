@@ -109,6 +109,7 @@ bool WebSocket::Connect(const char* uri) {
     }
 
     ESP_LOGD(TAG, "Connecting to %s://%s:%s%s", protocol.c_str(), host.c_str(), port.c_str(), path.c_str());
+    uint32_t t_connect = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
     // 设置 WebSocket 特定的头部
     SetHeader("Upgrade", "websocket");
@@ -135,6 +136,7 @@ bool WebSocket::Connect(const char* uri) {
         ESP_LOGE(TAG, "Failed to connect to server");
         return false;
     }
+    uint32_t t_connected = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
     // 发送 WebSocket 握手请求
     std::string request = "GET " + path + " HTTP/1.1\r\n";
@@ -177,8 +179,10 @@ bool WebSocket::Connect(const char* uri) {
         pdFALSE,  // 等待任意一个事件位
         pdMS_TO_TICKS(10000)  // 10秒超时
     );
+    uint32_t t_handshaked = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
     if (bits & HANDSHAKE_SUCCESS_BIT) {
+        ESP_LOGI(TAG, "WebSocket handshake done, cost=%u tcp=%u handshake=%u", t_handshaked - t_connect, t_connected - t_connect, t_handshaked - t_connected);
         connected_ = true;
         if (on_connected_) {
             on_connected_();

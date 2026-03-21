@@ -41,6 +41,7 @@ bool EspTcp::Connect(const std::string& host, int port) {
         return false;
     }
     memcpy(&server_addr.sin_addr, server->h_addr, server->h_length);
+    ESP_LOGI(TAG, "Resolved %s -> %s", host.c_str(), inet_ntoa(*(struct in_addr *)server->h_addr));
 
     tcp_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_fd_ < 0) {
