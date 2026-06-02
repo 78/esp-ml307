@@ -280,6 +280,10 @@ void WebSocket::OnError(std::function<void(int)> callback) {
     on_error_ = callback;
 }
 
+void WebSocket::OnPong(std::function<void(const char*, size_t)> callback) {
+    on_pong_ = callback;
+}
+
 int WebSocket::GetLastError() {
     if (tcp_) {
         return tcp_->GetLastError();
@@ -394,6 +398,9 @@ void WebSocket::OnTcpData(const std::string& data) {
                 SendControlFrame(0xA, payload.data(), payload_length);
                 break;
             case 0xA: // Pong
+                if (on_pong_) {
+                    on_pong_(payload.data(), payload_length);
+                }
                 break;
             default:
                 ESP_LOGE(TAG, "Unknown opcode: %d", opcode);

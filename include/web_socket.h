@@ -32,6 +32,13 @@ public:
     void OnDisconnected(std::function<void()> callback);
     void OnData(std::function<void(const char*, size_t, bool binary)> callback);
     void OnError(std::function<void(int)> callback);
+    // Invoked when a Pong control frame (opcode 0xA) is received from the
+    // peer, carrying the Pong's application data payload (which echoes the
+    // payload of the Ping that triggered it). Lets callers implement an
+    // active liveness check (send Ping(), expect OnPong within a timeout)
+    // or measure round-trip time, without the library imposing any timeout
+    // policy of its own.
+    void OnPong(std::function<void(const char*, size_t)> callback);
 
     // 获取最后一次错误码
     int GetLastError();
@@ -58,6 +65,7 @@ private:
     std::function<void(int)> on_error_;
     std::function<void()> on_connected_;
     std::function<void()> on_disconnected_;
+    std::function<void(const char*, size_t)> on_pong_;
 
     std::vector<char> current_message_;
     bool is_fragmented_ = false;
