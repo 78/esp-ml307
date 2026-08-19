@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 
 #define ESP_SSL_EVENT_RECEIVE_TASK_EXIT 1
+#define ESP_SSL_CONNECT_TIMEOUT_MS 10000
 
 class EspSsl : public Tcp {
 public:

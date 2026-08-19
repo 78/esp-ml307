@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
+#include <fcntl.h>
 
 static const char *TAG = "EspTcp";
 
@@ -50,14 +51,50 @@ bool EspTcp::Connect(const std::string& host, int port) {
         return false;
     }
 
+    // Non-blocking connect with timeout to avoid blocking the main loop
+    // when the server is unreachable.
+    int flags = fcntl(tcp_fd_, F_GETFL, 0);
+    fcntl(tcp_fd_, F_SETFL, flags | O_NONBLOCK);
+
     int ret = connect(tcp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
     if (ret < 0) {
-        last_error_ = errno;
-        ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, last_error_);
-        close(tcp_fd_);
-        tcp_fd_ = -1;
-        return false;
+        if (errno == EINPROGRESS) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(tcp_fd_, &wfds);
+            struct timeval tv;
+            tv.tv_sec = ESP_TCP_CONNECT_TIMEOUT_S;
+            tv.tv_usec = 0;
+            ret = select(tcp_fd_ + 1, NULL, &wfds, NULL, &tv);
+            if (ret <= 0) {
+                ESP_LOGE(TAG, "Connect timeout to %s:%d", host.c_str(), port);
+                last_error_ = (ret == 0) ? ETIMEDOUT : errno;
+                close(tcp_fd_);
+                tcp_fd_ = -1;
+                return false;
+            }
+            // select() returned > 0 — check if the connection succeeded
+            int error = 0;
+            socklen_t len = sizeof(error);
+            getsockopt(tcp_fd_, SOL_SOCKET, SO_ERROR, &error, &len);
+            if (error != 0) {
+                ESP_LOGE(TAG, "Connect failed to %s:%d, error=%d", host.c_str(), port, error);
+                last_error_ = error;
+                close(tcp_fd_);
+                tcp_fd_ = -1;
+                return false;
+            }
+        } else {
+            last_error_ = errno;
+            ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, last_error_);
+            close(tcp_fd_);
+            tcp_fd_ = -1;
+            return false;
+        }
     }
+
+    // Restore blocking mode for recv/send
+    fcntl(tcp_fd_, F_SETFL, flags);
 
     connected_ = true;
 

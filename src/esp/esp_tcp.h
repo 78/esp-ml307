@@ -8,6 +8,7 @@
 #include <freertos/task.h>
 
 #define ESP_TCP_EVENT_RECEIVE_TASK_EXIT 1
+#define ESP_TCP_CONNECT_TIMEOUT_S 10
 
 class EspTcp : public Tcp {
 public:

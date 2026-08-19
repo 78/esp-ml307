@@ -3,6 +3,8 @@
 #include <esp_crt_bundle.h>
 #include <cstring>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/select.h>
 
 static const char *TAG = "EspSsl";
 
@@ -34,7 +36,52 @@ bool EspSsl::Connect(const std::string& host, int port) {
     esp_tls_cfg_t cfg = {};
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
-    int ret = esp_tls_conn_new_sync(host.c_str(), host.length(), port, &cfg, tls_client_);
+    // Non-blocking TLS connect with timeout to avoid blocking the main loop
+    // when the server is unreachable.
+    TickType_t start_ticks = xTaskGetTickCount();
+    int ret;
+    while (true) {
+        ret = esp_tls_conn_new_async(host.c_str(), host.length(), port, &cfg, tls_client_);
+        if (ret == 1) {
+            break;  // Connected successfully
+        } else if (ret < 0) {
+            break;  // Connection failed
+        }
+
+        // ret == 0: connection still in progress — poll the socket with timeout
+        int sockfd = -1;
+        esp_tls_get_conn_sockfd(tls_client_, &sockfd);
+        if (sockfd < 0) {
+            ESP_LOGE(TAG, "Failed to get socket fd during connect");
+            ret = -1;
+            break;
+        }
+
+        TickType_t elapsed_ms = (xTaskGetTickCount() - start_ticks) * portTICK_PERIOD_MS;
+        if (elapsed_ms >= ESP_SSL_CONNECT_TIMEOUT_MS) {
+            ESP_LOGE(TAG, "Connect timeout to %s:%d", host.c_str(), port);
+            last_error_ = ETIMEDOUT;
+            esp_tls_conn_destroy(tls_client_);
+            tls_client_ = nullptr;
+            return false;
+        }
+
+        uint32_t remaining_ms = ESP_SSL_CONNECT_TIMEOUT_MS - elapsed_ms;
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(sockfd, &wfds);
+        struct timeval tv;
+        tv.tv_sec = remaining_ms / 1000;
+        tv.tv_usec = (remaining_ms % 1000) * 1000;
+        int sel = select(sockfd + 1, NULL, &wfds, NULL, &tv);
+        if (sel < 0) {
+            ESP_LOGE(TAG, "select() failed during connect: errno=%d", errno);
+            ret = -1;
+            break;
+        }
+        // If sel == 0 (timeout on select), loop will check overall timeout next iteration
+    }
+
     if (ret != 1) {
         esp_tls_error_handle_t last_error;
         if (esp_tls_get_error_handle(tls_client_, &last_error) == ESP_OK) {
