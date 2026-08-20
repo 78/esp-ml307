@@ -3,6 +3,7 @@
 #include <esp_crt_bundle.h>
 #include <cstring>
 #include <unistd.h>
+#include <sys/socket.h>
 
 static const char *TAG = "EspSsl";
 
@@ -53,6 +54,16 @@ bool EspSsl::Connect(const std::string& host, int port) {
 
     connected_ = true;
 
+    // Set send timeout on the underlying socket. mbedTLS uses the socket for
+    // transport, so SO_SNDTIMEO propagates to esp_tls_conn_write().
+    int sockfd = -1;
+    if (esp_tls_get_conn_sockfd(tls_client_, &sockfd) == ESP_OK && sockfd >= 0) {
+        struct timeval send_tv;
+        send_tv.tv_sec = ESP_SSL_SEND_TIMEOUT_S;
+        send_tv.tv_usec = 0;
+        setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv));
+    }
+
     xEventGroupClearBits(event_group_, ESP_SSL_EVENT_RECEIVE_TASK_EXIT);
     xTaskCreate([](void* arg) {
         EspSsl* ssl = (EspSsl*)arg;
@@ -96,13 +107,23 @@ int EspSsl::Send(const std::string& data) {
     size_t total_sent = 0;
     size_t data_size = data.size();
     const char* data_ptr = data.data();
+    int want_write_count = 0;
     
     while (total_sent < data_size) {
         int ret = esp_tls_conn_write(tls_client_, data_ptr + total_sent, data_size - total_sent);
 
         if (ret == ESP_TLS_ERR_SSL_WANT_WRITE) {
+            // mbedTLS returns WANT_WRITE when the underlying send() would block
+            // (including when SO_SNDTIMEO fires). Break after repeated retries
+            // to avoid spinning indefinitely on a dead connection.
+            if (++want_write_count > ESP_SSL_SEND_MAX_RETRIES) {
+                ESP_LOGE(TAG, "SSL send: too many WANT_WRITE retries, giving up");
+                return -1;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+        want_write_count = 0;
 
         if (ret <= 0) {
             ESP_LOGE(TAG, "SSL send failed: ret=%d, errno=%d", ret, errno);

@@ -61,6 +61,13 @@ bool EspTcp::Connect(const std::string& host, int port) {
 
     connected_ = true;
 
+    // Set send timeout to avoid blocking the main loop indefinitely when
+    // the TCP send buffer fills up (slow network, half-open connection).
+    struct timeval send_tv;
+    send_tv.tv_sec = ESP_TCP_SEND_TIMEOUT_S;
+    send_tv.tv_usec = 0;
+    setsockopt(tcp_fd_, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv));
+
     xEventGroupClearBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
     xTaskCreate([](void* arg) {
         EspTcp* tcp = (EspTcp*)arg;

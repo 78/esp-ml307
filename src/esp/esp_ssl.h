@@ -9,6 +9,8 @@
 #include <freertos/task.h>
 
 #define ESP_SSL_EVENT_RECEIVE_TASK_EXIT 1
+#define ESP_SSL_SEND_TIMEOUT_S 10
+#define ESP_SSL_SEND_MAX_RETRIES 1000
 
 class EspSsl : public Tcp {
 public:
