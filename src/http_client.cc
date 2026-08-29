@@ -258,9 +258,11 @@ void HttpClient::Close() {
 }
 
 void HttpClient::OnTcpData(const std::string& data) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // 检查 body_chunks_ 大小，如果超过 8KB
+    // 检查 body_chunks_ 大小，如果超过 8KB — 这里不持有 mutex_，
+    // 因为该等待只依赖 read_mutex_ 保护的 body_chunks_ 和 connected_，
+    // 而 connected_ 只能由 OnTcpDisconnected() 设置，它需要获取 mutex_。
+    // 如果在等待期间持有 mutex_，OnTcpDisconnected() 将永远无法获取锁，
+    // 造成死锁（在服务器提前关闭连接、接收任务与本函数并发执行时触发）。
     {
         std::unique_lock<std::mutex> read_lock(read_mutex_);
         write_cv_.wait(read_lock, [this, size=data.size()] {
@@ -272,6 +274,7 @@ void HttpClient::OnTcpData(const std::string& data) {
         });
     }
 
+    std::lock_guard<std::mutex> lock(mutex_);
     rx_buffer_.append(data);
     ProcessReceivedData();
     cv_.notify_one();
