@@ -18,6 +18,7 @@
 #include <esp_log.h>
 #include <esp_sleep.h>
 #include <uart_uhci.h>
+#include "at_error.h"
 
 // UART Events
 #define AT_EVENT_COMMAND_DONE   BIT1
@@ -66,14 +67,14 @@ public:
     void Initialize();
     
     // Baud Rate Management
-    bool SetBaudRate(int new_baud_rate, int timeout_ms = -1);
+    AtResult SetBaudRate(int new_baud_rate, int timeout_ms = -1);
     int GetBaudRate() const { return baud_rate_; }
-    
+
     // Data Sending
-    bool SendCommand(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true);
-    bool SendCommandWithData(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true, const char* data = nullptr, size_t data_length = 0);
+    AtResult SendCommand(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true);
+    AtResult SendCommandWithData(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true,
+                                 const char* data = nullptr, size_t data_length = 0);
     std::string GetResponse() const;
-    int GetCmeErrorCode() const { return cme_error_code_; }
     
     // Callback Management
     std::list<UrcCallback>::iterator RegisterUrcCallback(UrcCallback callback);
@@ -100,7 +101,7 @@ private:
     bool initialized_;
     bool dtr_pin_state_;  // Record the current state of the DTR pin
     bool debug_ = false;  // Debug mode flag
-    int cme_error_code_ = 0;
+    AtError last_error_{};
     std::string response_;
     bool wait_for_response_ = false;
     std::mutex command_mutex_;
@@ -133,7 +134,12 @@ private:
     bool DetectBaudRate(int timeout_ms = -1);
     // Handle URC
     void HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments);
-    bool SendData(const char* data, size_t length);
+    AtResult Fail(AtError err) {
+        last_error_ = err;
+        return std::unexpected(err);
+    }
+    AtResult WaitCommandComplete(size_t timeout_ms);
+    AtResult SendData(const char* data, size_t length);
     
     // DMA RX Callback (called from ISR context)
     static bool IRAM_ATTR DmaRxCallback(const UartUhci::RxEventData& data, void* user_data);

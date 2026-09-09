@@ -1,5 +1,6 @@
 # Common source files for all targets
 set(COMMON_SRCS
+    "src/network_error.cc"
     "src/esp/esp_network.cc"
     "src/esp/esp_ssl.cc"
     "src/esp/esp_tcp.cc"
@@ -43,3 +44,5 @@ idf_component_register(
         "pthread"
         "mqtt"
 )
+
+target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_23)

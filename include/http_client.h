@@ -31,20 +31,19 @@ public:
     void SetTimeout(int timeout_ms) override;
     void SetHeader(const std::string& key, const std::string& value) override;
     void SetContent(std::string&& content) override;
-    bool Open(const std::string& method, const std::string& url) override;
+    NetworkResult<> Open(const std::string& method, const std::string& url) override;
     void Close() override;
-    int Read(char* buffer, size_t buffer_size) override;
-    int Write(const char* buffer, size_t buffer_size) override;
+    NetworkResult<int> Read(char* buffer, size_t buffer_size) override;
+    NetworkResult<int> Write(const char* buffer, size_t buffer_size) override;
     
     // Keep-Alive support
     void SetKeepAlive(bool enable);
     bool IsConnectionReusable(const std::string& host, int port) const;
 
-    int GetStatusCode() override;
+    NetworkResult<int> GetStatusCode() override;
     std::string GetResponseHeader(const std::string& key) const override;
     size_t GetBodyLength() override;
     std::string ReadAll() override;
-    int GetLastError() override;
 
 private:
     // 数据块结构，用于队列缓冲
@@ -122,7 +121,6 @@ private:
     bool connection_error_ = false;  // 新增：标记连接是否异常断开
     bool keep_alive_ = false;  // 新增：是否启用 Keep-Alive（默认不启用）
     bool server_keep_alive_ = false;  // 新增：服务器是否支持 Keep-Alive
-    int last_error_ = 0;  // 存储最后一次错误码
     
     // HTTP 协议解析状态
     enum class ParseState {

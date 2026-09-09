@@ -14,6 +14,7 @@
 #include <freertos/event_groups.h>
 #include <driver/gpio.h>
 #include <driver/uart.h>
+#include "at_error.h"
 #include "at_uart.h"
 #include "network_interface.h"
 
@@ -48,10 +49,12 @@ struct CeregState {
 
 class AtModem : public NetworkInterface {
 public:
-    // 静态检测方法
-    static std::unique_ptr<AtModem> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin = GPIO_NUM_NC, int baud_rate = 115200, int timeout_ms = -1);
-    // 静态检测方法（带 RI pin）
-    static std::unique_ptr<AtModem> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate, int timeout_ms = -1);
+    static AtValue<std::unique_ptr<AtModem>> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin,
+                                                    gpio_num_t dtr_pin = GPIO_NUM_NC,
+                                                    int baud_rate = 115200, int timeout_ms = -1);
+    static AtValue<std::unique_ptr<AtModem>> Detect(gpio_num_t tx_pin, gpio_num_t rx_pin,
+                                                    gpio_num_t dtr_pin, gpio_num_t ri_pin,
+                                                    int baud_rate, int timeout_ms = -1);
     
     // 构造函数和析构函数
     AtModem(std::shared_ptr<AtUart> at_uart);

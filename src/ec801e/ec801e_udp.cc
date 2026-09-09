@@ -17,7 +17,7 @@ Ec801EUdp::Ec801EUdp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_
                     xEventGroupClearBits(event_group_handle_, EC801E_UDP_DISCONNECTED | EC801E_UDP_ERROR);
                     xEventGroupSetBits(event_group_handle_, EC801E_UDP_CONNECTED);
                 } else {
-                    last_error_ = arguments[1].int_value;  // Store error code from QIOPEN response
+                    last_error_ = NetworkError::FromEc801ESocket(arguments[1].int_value);
                     xEventGroupSetBits(event_group_handle_, EC801E_UDP_ERROR);
                 }
             }
@@ -64,7 +64,7 @@ Ec801EUdp::~Ec801EUdp() {
     }
 }
 
-bool Ec801EUdp::Connect(const std::string& host, int port) {
+NetworkResult<> Ec801EUdp::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_UDP_CONNECTED | EC801E_UDP_DISCONNECTED | EC801E_UDP_ERROR);
 
@@ -84,18 +84,22 @@ bool Ec801EUdp::Connect(const std::string& host, int port) {
 
     // 打开 UDP 连接
     command = "AT+QIOPEN=1," + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ",0,1";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open UDP connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open UDP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     auto bits = xEventGroupWaitBits(event_group_handle_, EC801E_UDP_CONNECTED | EC801E_UDP_ERROR, pdTRUE, pdFALSE, UDP_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (bits & EC801E_UDP_ERROR) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
+        return Fail(last_error_);
     }
-    return true;
+    if (!(bits & EC801E_UDP_CONNECTED)) {
+        ESP_LOGE(TAG, "Timeout connecting to %s:%d", host.c_str(), port);
+        return Fail(NetworkError::Timeout());
+    }
+    return {};
 }
 
 
@@ -139,8 +143,4 @@ int Ec801EUdp::Send(const std::string& data) {
     }
 
     return data.size();
-}
-
-int Ec801EUdp::GetLastError() {
-    return last_error_;
 }

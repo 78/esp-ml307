@@ -1,14 +1,15 @@
 #ifndef UDP_H
 #define UDP_H
 
+#include "network_error.h"
 
-#include <string>
 #include <functional>
+#include <string>
 
 class Udp {
 public:
     virtual ~Udp() = default;
-    virtual bool Connect(const std::string& host, int port) = 0;
+    virtual NetworkResult<> Connect(const std::string& host, int port) = 0;
     virtual void Disconnect() = 0;
     virtual int Send(const std::string& data) = 0;
 
@@ -17,12 +18,15 @@ public:
     }
     bool connected() const { return connected_; }
 
-    // 获取最后一次错误码
-    virtual int GetLastError() = 0;
-
 protected:
+    NetworkResult<> Fail(NetworkError err) {
+        last_error_ = err;
+        return std::unexpected(err);
+    }
+
     std::function<void(const std::string& data)> message_callback_;
+    NetworkError last_error_{};
     bool connected_ = false;
 };
 
-#endif // UDP_H
+#endif  // UDP_H

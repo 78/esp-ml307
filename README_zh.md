@@ -1,19 +1,19 @@
 # ML307 / Quectel-E Series Cat.1 AT Modem (v3.7)
 
-English | [简体中文](README_zh.md)
+[English](README.md) | 简体中文
 
-ESP-IDF component for ML307R / EC801E / NT26K LTE Cat.1 modules.
-Originally created for https://github.com/78/xiaozhi-esp32.
+这是一个适用于 ML307R / EC801E / NT26K LTE Cat.1 模组的组件。
+本项目最初为 https://github.com/78/xiaozhi-esp32 项目创建。
 
-If you see `UART_FIFO_OVF`, set `CONFIG_UART_ISR_IN_IRAM=y` and keep heavy I/O such as LVGL on CPU1.
+出现 UART_FIFO_OVF 需要设置 `CONFIG_UART_ISR_IN_IRAM=y`，其他 IO 如 LVGL 放在 CPU1。
 
-Requires **C++23** (`std::expected`) and **ESP-IDF >= 5.5.2**.
+组件要求 **C++23**（`std::expected`）和 **ESP-IDF >= 5.5.2**。
 
-## What's New in 3.7
+## 🆕 版本 3.7 新特性
 
-- **Structured errors**: sync APIs return `NetworkResult<>` / `AtResult` (`std::expected`). `bool` + `GetLastError()` is gone.
-- **Actionable failure reasons**: DNS, timeout, TLS, auth, CME, and similar failures map to `NetworkErrc`. `ToString()` is safe to show to users.
-- **Async errors use callbacks**: WebSocket `OnError` receives `const NetworkError&`; MQTT `OnError` still receives a readable string.
+- **结构化错误**: 同步接口返回 `NetworkResult<>` / `AtResult`（`std::expected`），不再用 `bool` + `GetLastError()`
+- **可区分失败原因**: DNS、超时、TLS、认证拒绝、CME 等映射到 `NetworkErrc`，`ToString()` 可直接展示给用户
+- **异步错误走回调**: WebSocket `OnError` 接收 `const NetworkError&`；MQTT `OnError` 仍接收可读字符串
 
 ```cpp
 auto opened = http->Open("GET", "https://example.com/ota.json");
@@ -24,48 +24,47 @@ if (!opened) {
 }
 ```
 
-## What's New in 3.5
+## 🆕 版本 3.5 新特性
 
-- Low-power mode for the cellular module
-- DTR pin wakes the 4G module from the MCU
-- RI pin wakes the MCU from the 4G module
-- EC801E idle current on-network is about 1–2 mA
+- **低功耗模式支持**: 支持模组进入低功耗模式，大幅降低待机功耗
+- **DTR 唤醒功能**: DTR 引脚用于 MCU 唤醒 4G 模组
+- **RI 唤醒功能**: RI 引脚用于 4G 模组唤醒 MCU
+- **超低待机功耗**: EC801E 实测驻网待机电流 1~2mA
 
-Enable these options for low-power mode:
+> **注意**: 使用低功耗模式需要开启以下配置：
+> - `CONFIG_PM_ENABLE=y`
+> - `CONFIG_FREERTOS_USE_TICKLESS_IDLE=y`
 
-- `CONFIG_PM_ENABLE=y`
-- `CONFIG_FREERTOS_USE_TICKLESS_IDLE=y`
+## 🆕 版本 3.0 新特性
 
-## What's New in 3.0
+- **自动模组检测**: 自动识别 ML307 和 EC801E 模组
+- **统一接口**: 通过 `NetworkInterface` 基类提供一致的 API
+- **智能内存管理**: 使用 `std::unique_ptr` 确保内存安全
+- **简化的 API**: 更加直观和易用的接口设计
 
-- Automatic module detection for ML307 and EC801E
-- Shared `NetworkInterface` API
-- `std::unique_ptr` ownership
-- Simpler client creation
+## 功能特性
 
-## Features
-
-- AT commands
+- AT 命令
 - MQTT / MQTTS
 - HTTP / HTTPS
 - TCP / SSL TCP
 - UDP
 - WebSocket
-- Automatic module detect and init
-- Structured network / AT errors
+- 自动模组检测和初始化
+- 结构化网络 / AT 错误
 
-## Supported Modules
+## 支持的模组
 
 - ML307R
 - ML307A
 - EC801E \*
 - NT26K \*
 
-\* Confirm with the vendor that the firmware includes SSL TCP support.
+\* 需要在购买时咨询是否已烧录支持 SSL TCP 的固件
 
-## Quick Start
+## 快速开始
 
-### Basic Usage
+### 基础用法
 
 ```cpp
 #include "esp_log.h"
@@ -99,7 +98,7 @@ extern "C" void app_main(void) {
 }
 ```
 
-### HTTP Client
+### HTTP 客户端
 
 ```cpp
 void TestHttp(std::unique_ptr<AtModem>& modem) {
@@ -126,7 +125,7 @@ void TestHttp(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-`Read()` returns the number of bytes on success (`0` means EOF) and a `NetworkError` on failure:
+分块读取时，`Read()` 成功返回已读字节数（`0` 表示结束），失败返回 `NetworkError`：
 
 ```cpp
 char buffer[512];
@@ -143,7 +142,7 @@ while (true) {
 }
 ```
 
-### MQTT Client
+### MQTT 客户端
 
 ```cpp
 void TestMqtt(std::unique_ptr<AtModem>& modem) {
@@ -175,7 +174,7 @@ void TestMqtt(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-### WebSocket Client
+### WebSocket 客户端
 
 ```cpp
 void TestWebSocket(std::unique_ptr<AtModem>& modem) {
@@ -210,7 +209,7 @@ void TestWebSocket(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-### TCP Client
+### TCP 客户端
 
 ```cpp
 void TestTcp(std::unique_ptr<AtModem>& modem) {
@@ -236,7 +235,7 @@ void TestTcp(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-### UDP Client
+### UDP 客户端
 
 ```cpp
 void TestUdp(std::unique_ptr<AtModem>& modem) {
@@ -258,18 +257,18 @@ void TestUdp(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-## Error Handling
+## 错误处理
 
-Synchronous results are in the return value. Do not call `GetLastError()`; that API was removed.
+同步调用的结果在返回值里，不要再查询 `GetLastError()`（该接口已删除）。
 
-| Type | Definition | Used by |
+| 类型 | 定义 | 用途 |
 |---|---|---|
 | `NetworkResult<T>` | `std::expected<T, NetworkError>` | HTTP / TCP / UDP / MQTT / WebSocket |
-| `NetworkResult<>` | `std::expected<void, NetworkError>` | `Open()` / `Connect()` |
+| `NetworkResult<>` | `std::expected<void, NetworkError>` | `Open()` / `Connect()` 等无返回值接口 |
 | `AtResult` | `std::expected<void, AtError>` | `AtUart::SendCommand()` / `SetBaudRate()` |
 | `AtValue<T>` | `std::expected<T, AtError>` | `AtModem::Detect()` |
 
-`NetworkError` keeps both a category and the native code:
+`NetworkError` 包含分类码和底层原始码：
 
 ```cpp
 enum class NetworkErrc {
@@ -300,9 +299,9 @@ struct NetworkError {
 };
 ```
 
-Keep `native` for vendor manuals. Prefer `ToString()` or `Message()` in logs and UI.
+`native` 保留模组或系统原始错误，便于对照手册；展示给用户时优先用 `ToString()` 或 `Message()`。
 
-Branch on the category when you need different retry behavior:
+按类别分支处理：
 
 ```cpp
 auto opened = http->Open("GET", url);
@@ -325,7 +324,7 @@ if (!opened) {
 }
 ```
 
-AT errors can be converted to network errors:
+AT 层错误可以转成网络错误：
 
 ```cpp
 auto uart = modem->GetAtUart();
@@ -338,14 +337,14 @@ if (auto result = uart->SendCommand("AT+CSQ", 1000); result) {
 }
 ```
 
-After a connection is established, later failures go through callbacks:
+连接建立之后的失败走回调，而不是再次调用同步接口：
 
 - WebSocket: `OnError(const NetworkError&)`
 - MQTT: `OnError(const std::string&)`
 - TCP: `OnDisconnected()`
 - Modem: `OnNetworkStateChanged(bool)`
 
-Network attach still uses `NetworkStatus` (SIM / registration / timeout). That is separate from transport-level `NetworkError`:
+驻网阶段仍使用 `NetworkStatus`（SIM / 注册 / 超时），与传输层的 `NetworkError` 分开：
 
 ```cpp
 switch (modem->WaitForNetworkReady(30000)) {
@@ -366,9 +365,9 @@ switch (modem->WaitForNetworkReady(30000)) {
 }
 ```
 
-## Advanced Usage
+## 高级用法
 
-### Direct AtUart Access
+### 直接访问 AtUart
 
 ```cpp
 void DirectAtCommand(std::unique_ptr<AtModem>& modem) {
@@ -383,7 +382,7 @@ void DirectAtCommand(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-### Network State Monitoring
+### 网络状态监控
 
 ```cpp
 void MonitorNetwork(std::unique_ptr<AtModem>& modem) {
@@ -398,7 +397,7 @@ void MonitorNetwork(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-### Releasing Clients Early
+### 提前释放网络对象
 
 ```cpp
 void EarlyReleaseExample(std::unique_ptr<AtModem>& modem) {
@@ -415,9 +414,9 @@ void EarlyReleaseExample(std::unique_ptr<AtModem>& modem) {
 }
 ```
 
-## Migration (v3.6 → v3.7)
+## 迁移指南 (v3.6 → v3.7)
 
-3.7 is not compatible with `bool` / `GetLastError()`. Callers must switch to `std::expected`.
+3.7 不兼容旧的 `bool` / `GetLastError()` 用法，调用方必须改成 `std::expected`。
 
 ```cpp
 // v3.6
@@ -431,31 +430,31 @@ if (auto opened = http->Open("GET", url); !opened) {
 }
 ```
 
-Signature changes:
+主要签名变化：
 
 | API | v3.6 | v3.7 |
 |---|---|---|
 | `AtModem::Detect` | `std::unique_ptr<AtModem>` / `nullptr` | `AtValue<std::unique_ptr<AtModem>>` |
 | `Http::Open` / `Tcp::Connect` / `Udp::Connect` / `Mqtt::Connect` / `WebSocket::Connect` | `bool` | `NetworkResult<>` |
-| `Http::Read` / `Write` / `GetStatusCode` | `int` (negative on failure) | `NetworkResult<int>` |
+| `Http::Read` / `Write` / `GetStatusCode` | `int`（失败为负数） | `NetworkResult<int>` |
 | `AtUart::SendCommand` / `SetBaudRate` | `bool` | `AtResult` |
-| `GetLastError()` / `GetCmeErrorCode()` | public API | **removed** |
+| `GetLastError()` / `GetCmeErrorCode()` | 公开接口 | **已删除** |
 | `WebSocket::OnError` | `void(int)` | `void(const NetworkError&)` |
 
-`std::expected` converts to `bool` only explicitly. If a wrapper still returns `bool`, use `.has_value()`:
+`std::expected` 只允许显式转 `bool`。若外层函数仍返回 `bool`，写成 `.has_value()`：
 
 ```cpp
 return at_uart_->SendCommand("AT+QSCLK=1").has_value();
 ```
 
-Dependency:
+依赖声明：
 
 ```yaml
 dependencies:
   78/esp-ml307: "~3.7.0"
 ```
 
-## Migration (v2.x → v3.0)
+## 迁移指南 (v2.x → v3.0)
 
 ```cpp
 // v2.x
@@ -477,24 +476,24 @@ if (auto opened = http->Open("GET", "https://example.com"); !opened) {
 }
 ```
 
-## Design Notes
+## 架构优势
 
-1. Module type is detected automatically
-2. All modules share the same client API
-3. Sync failures carry a reason, so OTA no longer reports only `code=-1`
-4. `std::unique_ptr` owns protocol clients
-5. New module backends can be added behind `NetworkInterface`
+1. **自动化**: 无需手动指定模组类型，提高代码通用性
+2. **统一接口**: 不同模组使用相同的 API
+3. **明确错误**: 同步失败原因随返回值一起给出，OTA 等场景不再只看到 `code=-1`
+4. **内存安全**: `std::unique_ptr` 提供自动内存管理
+5. **扩展性**: 便于添加新的模组类型支持
 
-## Notes
+## 注意事项
 
-1. Create the modem with `AtModem::Detect()` and check the `AtValue`
-2. Create protocol clients with `CreateXxx()`; they return `std::unique_ptr`
-3. Sync failures are in the return value; later disconnects and protocol errors use callbacks
-4. `GetAtUart()` returns `shared_ptr<AtUart>` and can be shared safely
-5. Call `.reset()` to release a client early
-6. Network interface methods default to `connect_id = -1`
-7. Translation units need C++23; the component exports `PUBLIC cxx_std_23`
+1. 使用 `AtModem::Detect()` 创建模组实例，并检查 `AtValue`
+2. 协议客户端通过 `CreateXxx()` 创建，返回 `std::unique_ptr`
+3. 同步失败看返回值；连接后的断开 / 协议错误看回调
+4. `GetAtUart()` 返回 `shared_ptr<AtUart>`，支持安全共享
+5. 提前释放网络对象时调用 `.reset()`
+6. 所有网络接口方法现在都有默认参数 `connect_id = -1`
+7. 编译单元需要 C++23（组件已 `PUBLIC cxx_std_23`）
 
-## Author
+## 作者
 
-- Terrence (terrence@tenclass.com)
+- 虾哥 Terrence (terrence@tenclass.com)

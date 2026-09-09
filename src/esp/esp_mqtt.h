@@ -22,20 +22,19 @@ public:
     EspMqtt();
     ~EspMqtt();
 
-    bool Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password);
+    NetworkResult<> Connect(const std::string broker_address, int broker_port, const std::string client_id,
+                            const std::string username, const std::string password);
     void Disconnect();
     bool Publish(const std::string topic, const std::string payload, int qos = 0);
     bool Subscribe(const std::string topic, int qos = 0);
     bool Unsubscribe(const std::string topic);
     bool IsConnected();
-    int GetLastError() override;
 
 private:
     bool connected_ = false;
     EventGroupHandle_t event_group_handle_;
     std::string message_payload_;
     esp_mqtt_client_handle_t mqtt_client_handle_ = nullptr;
-    int last_error_ = 0;
 
     void MqttEventCallback(esp_event_base_t base, int32_t event_id, void *event_data);
 };

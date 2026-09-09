@@ -1,37 +1,38 @@
 #ifndef TCP_H
 #define TCP_H
 
+#include "network_error.h"
 
-#include <string>
 #include <functional>
+#include <string>
 
 class Tcp {
 public:
     virtual ~Tcp() = default;
-    virtual bool Connect(const std::string& host, int port) = 0;
+    virtual NetworkResult<> Connect(const std::string& host, int port) = 0;
     virtual void Disconnect() = 0;
     virtual int Send(const std::string& data) = 0;
 
     virtual void OnStream(std::function<void(const std::string& data)> callback) {
         stream_callback_ = callback;
     }
-    
+
     virtual void OnDisconnected(std::function<void()> callback) {
         disconnect_callback_ = callback;
     }
-    
-    // 连接状态查询
+
     bool connected() const { return connected_; }
 
-    // 获取最后一次错误码
-    virtual int GetLastError() = 0;
-
 protected:
+    NetworkResult<> Fail(NetworkError err) {
+        last_error_ = err;
+        return std::unexpected(err);
+    }
+
     std::function<void(const std::string& data)> stream_callback_;
     std::function<void()> disconnect_callback_;
-    
-    // 连接状态管理
-    bool connected_ = false;         // 是否可以正常读写数据
+    NetworkError last_error_{};
+    bool connected_ = false;
 };
 
-#endif // TCP_H
+#endif  // TCP_H

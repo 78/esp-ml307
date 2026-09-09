@@ -68,9 +68,9 @@ bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
         if (delay_seconds > 0) {
             at_uart_->SendCommand("AT+MLPMCFG=\"delaysleep\"," + std::to_string(delay_seconds));
         }
-        return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",2,0");
+        return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",2,0").has_value();
     } else {
-        return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",0,0");
+        return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",0,0").has_value();
     }
 }
 

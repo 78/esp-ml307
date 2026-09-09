@@ -19,16 +19,16 @@ EspSsl::~EspSsl() {
     }
 }
 
-bool EspSsl::Connect(const std::string& host, int port) {
+NetworkResult<> EspSsl::Connect(const std::string& host, int port) {
     if (tls_client_ != nullptr) {
         ESP_LOGE(TAG, "tls client has been initialized");
-        return false;
+        return Fail(NetworkError::ProtocolError());
     }
 
     tls_client_ = esp_tls_init();
     if (tls_client_ == nullptr) {
         ESP_LOGE(TAG, "Failed to initialize TLS");
-        return false;
+        return Fail(NetworkError::TlsFailed());
     }
 
     esp_tls_cfg_t cfg = {};
@@ -36,19 +36,19 @@ bool EspSsl::Connect(const std::string& host, int port) {
 
     int ret = esp_tls_conn_new_sync(host.c_str(), host.length(), port, &cfg, tls_client_);
     if (ret != 1) {
-        esp_tls_error_handle_t last_error;
-        if (esp_tls_get_error_handle(tls_client_, &last_error) == ESP_OK) {
+        NetworkError err = NetworkError::TlsFailed();
+        esp_tls_error_handle_t tls_error;
+        if (esp_tls_get_error_handle(tls_client_, &tls_error) == ESP_OK) {
             int error_code, error_flags;
-            esp_err_t err = esp_tls_get_and_clear_last_error(last_error, &error_code, &error_flags);
-            last_error_ = err;
-            ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, err);
+            esp_err_t esp_err = esp_tls_get_and_clear_last_error(tls_error, &error_code, &error_flags);
+            err = NetworkError::FromEsp(esp_err);
+            ESP_LOGE(TAG, "Failed to connect to %s:%d: %s", host.c_str(), port, err.ToString().c_str());
         } else {
-            last_error_ = -1;
             ESP_LOGE(TAG, "Failed to get error handle");
         }
         esp_tls_conn_destroy(tls_client_);
         tls_client_ = nullptr;
-        return false;
+        return Fail(err);
     }
 
     connected_ = true;
@@ -60,7 +60,7 @@ bool EspSsl::Connect(const std::string& host, int port) {
         xEventGroupSetBits(ssl->event_group_, ESP_SSL_EVENT_RECEIVE_TASK_EXIT);
         vTaskDelete(NULL);
     }, "ssl_receive", 4096, this, 1, &receive_task_handle_);
-    return true;
+    return {};
 }
 
 void EspSsl::Disconnect() {
@@ -144,6 +144,3 @@ void EspSsl::ReceiveTask() {
     }
 }
 
-int EspSsl::GetLastError() {
-    return last_error_;
-}

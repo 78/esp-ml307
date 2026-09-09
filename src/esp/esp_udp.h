@@ -14,16 +14,14 @@ public:
     EspUdp();
     ~EspUdp();
 
-    bool Connect(const std::string& host, int port) override;
+    NetworkResult<> Connect(const std::string& host, int port) override;
     void Disconnect() override;
     int Send(const std::string& data) override;
-    int GetLastError() override;
 
 private:
     int udp_fd_;
     EventGroupHandle_t event_group_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
-    int last_error_ = 0;
 
     void ReceiveTask();
 };

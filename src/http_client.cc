@@ -169,12 +169,12 @@ std::string HttpClient::BuildHttpRequest() {
     return request.str();
 }
 
-bool HttpClient::Open(const std::string& method, const std::string& url) {
+NetworkResult<> HttpClient::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
-    
+
     if (!ParseUrl(url)) {
-        return false;
+        return Fail(NetworkError::InvalidArgument());
     }
 
     // 检查是否可以复用现有连接
@@ -213,10 +213,9 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
             OnTcpDisconnected();
         });
         
-        if (!tcp_->Connect(host_, port_)) {
-            last_error_ = tcp_->GetLastError();
-            ESP_LOGE(TAG, "TCP connection failed, code=0x%x", last_error_);
-            return false;
+        if (auto result = tcp_->Connect(host_, port_); !result) {
+            ESP_LOGE(TAG, "TCP connection failed: %s", result.error().ToString().c_str());
+            return Fail(result.error());
         }
         uint32_t t_connected = xTaskGetTickCount() * portTICK_PERIOD_MS;
         
@@ -232,14 +231,14 @@ bool HttpClient::Open(const std::string& method, const std::string& url) {
         ESP_LOGE(TAG, "Send HTTP request failed");
         tcp_->Disconnect();
         connected_ = false;
-        return false;
+        return Fail(NetworkError::TransmitFailed());
     }
 
     // 发送完成后清空 content_ 和 headers_，避免下次请求误用
     content_ = std::nullopt;
     headers_.clear();
 
-    return true;
+    return {};
 }
 
 void HttpClient::Close() {
@@ -560,15 +559,16 @@ bool HttpClient::HasCompleteLine(const std::string& buffer) {
 
 void HttpClient::SetError() {
     ESP_LOGE(TAG, "HTTP parse error");
+    last_error_ = NetworkError::ProtocolError();
     xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_ERROR);
 }
 
-int HttpClient::Read(char* buffer, size_t buffer_size) {
+NetworkResult<int> HttpClient::Read(char* buffer, size_t buffer_size) {
     std::unique_lock<std::mutex> read_lock(read_mutex_);
 
     // 如果连接异常断开，返回错误
     if (connection_error_) {
-        return -1;
+        return FailValue<int>(NetworkError::ServerDisconnected());
     }
 
     // 如果已经到达文件末尾且没有更多数据，返回0
@@ -598,9 +598,9 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
     // 如果连接已断开，检查是否有错误
     if (!connected_) {
         if (connection_error_) {
-            return -1;  // 连接异常断开
+            return FailValue<int>(NetworkError::ServerDisconnected());
         }
-        return 0;  // 正常结束
+        return 0;
     }
 
     // 等待数据或连接关闭
@@ -611,12 +611,12 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
 
     if (!received) {
         ESP_LOGE(TAG, "Wait for HTTP content receive timeout");
-        return -1;
+        return FailValue<int>(NetworkError::Timeout());
     }
 
     // 再次检查连接错误状态
     if (connection_error_) {
-        return -1;
+        return FailValue<int>(NetworkError::ServerDisconnected());
     }
 
     // 再次检查是否有数据可读
@@ -642,52 +642,50 @@ int HttpClient::Read(char* buffer, size_t buffer_size) {
     return 0;
 }
 
-int HttpClient::Write(const char* buffer, size_t buffer_size) {
+NetworkResult<int> HttpClient::Write(const char* buffer, size_t buffer_size) {
     if (!connected_) {
         ESP_LOGE(TAG, "Cannot write: connection closed");
-        return -1;
+        return FailValue<int>(NetworkError::ServerDisconnected());
     }
 
+    auto send_or_fail = [this](const std::string& data) -> NetworkResult<int> {
+        int sent = tcp_->Send(data);
+        if (sent < 0) {
+            return FailValue<int>(NetworkError::TransmitFailed());
+        }
+        return sent;
+    };
+
     if (request_chunked_) {
-        // Chunked 模式
         if (buffer_size == 0) {
-            // 发送结束 chunk
-            std::string end_chunk = "0\r\n\r\n";
-            return tcp_->Send(end_chunk);
+            return send_or_fail("0\r\n\r\n");
         }
 
-        // 发送 chunk
         std::ostringstream chunk;
         chunk << std::hex << buffer_size << "\r\n";
         chunk.write(buffer, buffer_size);
         chunk << "\r\n";
-
-        std::string chunk_data = chunk.str();
-        return tcp_->Send(chunk_data);
-    } else {
-        // 非 Chunked 模式，直接发送原始数据
-        if (buffer_size == 0) {
-            return 0;  // 无数据需要发送
-        }
-
-        return tcp_->Send(std::string(buffer, buffer_size));
+        return send_or_fail(chunk.str());
     }
+
+    if (buffer_size == 0) {
+        return 0;
+    }
+    return send_or_fail(std::string(buffer, buffer_size));
 }
 
-int HttpClient::GetStatusCode() {
+NetworkResult<int> HttpClient::GetStatusCode() {
     if (!headers_received_) {
-        // 等待头部接收
         auto bits = xEventGroupWaitBits(event_group_handle_,
                                         EC801E_HTTP_EVENT_HEADERS_RECEIVED | EC801E_HTTP_EVENT_ERROR,
-                                        pdFALSE, pdFALSE,
-                                        pdMS_TO_TICKS(timeout_ms_));
+                                        pdFALSE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
 
         if (bits & EC801E_HTTP_EVENT_ERROR) {
-            return -1;
+            return FailValue<int>(last_error_.empty() ? NetworkError::ProtocolError() : last_error_);
         }
         if (!(bits & EC801E_HTTP_EVENT_HEADERS_RECEIVED)) {
             ESP_LOGE(TAG, "Wait for HTTP headers receive timeout");
-            return -1;
+            return FailValue<int>(NetworkError::Timeout());
         }
     }
 
@@ -782,12 +780,6 @@ bool HttpClient::IsDataComplete() const {
     return true;
 }
 
-int HttpClient::GetLastError() {
-    if (tcp_) {
-        return tcp_->GetLastError();
-    }
-    return last_error_;
-}
 
 void HttpClient::ResetRequestState() {
     // 重置请求状态，但保持连接

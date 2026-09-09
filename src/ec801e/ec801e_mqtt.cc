@@ -35,6 +35,7 @@ Ec801EMqtt::Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(
         } else if (command == "QMTCONN" && arguments.size() == 3) {
             if (arguments[0].int_value == mqtt_id_) {
                 error_code_ = arguments[2].int_value;
+                last_error_ = NetworkError::FromEc801EMqttConn(error_code_);
                 if (error_code_ == 0) {
                     if (!connected_) {
                         connected_ = true;
@@ -56,6 +57,7 @@ Ec801EMqtt::Ec801EMqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(
         } else if (command == "QMTOPEN" && arguments.size() == 2) {
             if (arguments[0].int_value == mqtt_id_) {
                 error_code_ = arguments[1].int_value;
+                last_error_ = NetworkError::FromEc801EMqttOpen(error_code_);
                 if (error_code_ == 0) {
                     xEventGroupSetBits(event_group_handle_, EC801E_MQTT_OPEN_COMPLETE);
                 } else {
@@ -79,47 +81,47 @@ Ec801EMqtt::~Ec801EMqtt() {
     vEventGroupDelete(event_group_handle_);
 }
 
-bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
+NetworkResult<> Ec801EMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
     EventBits_t bits;
 
     if (broker_port == 8883) {
         // Config SSL Context
         at_uart_->SendCommand("AT+QSSLCFG=\"sslversion\",2,4;+QSSLCFG=\"ciphersuite\",2,0xFFFF;+QSSLCFG=\"seclevel\",2,0");
-        if (!at_uart_->SendCommand(std::string("AT+QMTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1,2")) {
-            ESP_LOGE(TAG, "Failed to set MQTT to use SSL");
-            return false;
+        if (auto result = at_uart_->SendCommand(std::string("AT+QMTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1,2"); !result) {
+            ESP_LOGE(TAG, "Failed to set MQTT to use SSL: %s", result.error().ToString().c_str());
+            return Fail(result.error().ToNetworkError());
         }
     }
 
     // Set version
-    if (!at_uart_->SendCommand(std::string("AT+QMTCFG=\"version\",") + std::to_string(mqtt_id_) + ",4")) {
-        ESP_LOGE(TAG, "Failed to set MQTT version to 3.1.1");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+QMTCFG=\"version\",") + std::to_string(mqtt_id_) + ",4"); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT version to 3.1.1: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // Set clean session
-    if (!at_uart_->SendCommand(std::string("AT+QMTCFG=\"session\",") + std::to_string(mqtt_id_) + ",1")) {
-        ESP_LOGE(TAG, "Failed to set MQTT clean session");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+QMTCFG=\"session\",") + std::to_string(mqtt_id_) + ",1"); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT clean session: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // Set keep alive
-    if (!at_uart_->SendCommand(std::string("AT+QMTCFG=\"keepalive\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
-        ESP_LOGE(TAG, "Failed to set MQTT keep alive");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+QMTCFG=\"keepalive\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_)); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT keep alive: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // Set HEX encoding (ASCII for sending, HEX for receiving)
-    if (!at_uart_->SendCommand("AT+QMTCFG=\"dataformat\"," + std::to_string(mqtt_id_) + ",0,1")) {
-        ESP_LOGE(TAG, "Failed to set MQTT to use HEX encoding");
-        return false;
+    if (auto result = at_uart_->SendCommand("AT+QMTCFG=\"dataformat\"," + std::to_string(mqtt_id_) + ",0,1"); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT to use HEX encoding: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     xEventGroupClearBits(event_group_handle_, EC801E_MQTT_OPEN_COMPLETE | EC801E_MQTT_OPEN_FAILED);
     std::string command = "AT+QMTOPEN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port);
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open MQTT connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open MQTT connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_OPEN_COMPLETE | EC801E_MQTT_OPEN_FAILED, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
@@ -140,21 +142,21 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
             bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
             if (!(bits & EC801E_MQTT_DISCONNECTED_EVENT)) {
                 ESP_LOGE(TAG, "Failed to disconnect from previous connection");
-                return false;
+                return Fail(NetworkError::Timeout());
             }
             return Connect(broker_address, broker_port, client_id, username, password);
         }
-        return false;
+        return Fail(NetworkError::FromEc801EMqttOpen(error_code_));
     } else if (!(bits & EC801E_MQTT_OPEN_COMPLETE)) {
         ESP_LOGE(TAG, "MQTT connection timeout");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
 
     xEventGroupClearBits(event_group_handle_, EC801E_MQTT_CONNECTED_EVENT | EC801E_MQTT_DISCONNECTED_EVENT);
     command = "AT+QMTCONN=" + std::to_string(mqtt_id_) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to connect to MQTT broker");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to connect to MQTT broker: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
@@ -170,12 +172,12 @@ bool Ec801EMqtt::Connect(const std::string broker_address, int broker_port, cons
         };
         const char* message = error_code_ < 6 ? error_code_str[error_code_] : "Unknown error";
         ESP_LOGE(TAG, "Failed to connect to MQTT broker: %s", message);
-        return false;
+        return Fail(NetworkError::FromEc801EMqttConn(error_code_));
     } else if (!(bits & EC801E_MQTT_CONNECTED_EVENT)) {
         ESP_LOGE(TAG, "MQTT connection timeout");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
-    return true;
+    return {};
 }
 
 bool Ec801EMqtt::IsConnected() {
@@ -207,7 +209,7 @@ bool Ec801EMqtt::Subscribe(const std::string topic, int qos) {
         return false;
     }
     std::string command = "AT+QMTSUB=" + std::to_string(mqtt_id_) + ",0,\"" + topic + "\"," + std::to_string(qos);
-    return at_uart_->SendCommand(command);
+    return at_uart_->SendCommand(command).has_value();
 }
 
 bool Ec801EMqtt::Unsubscribe(const std::string topic) {
@@ -215,7 +217,7 @@ bool Ec801EMqtt::Unsubscribe(const std::string topic) {
         return false;
     }
     std::string command = "AT+QMTUNS=" + std::to_string(mqtt_id_) + ",0,\"" + topic + "\"";
-    return at_uart_->SendCommand(command);
+    return at_uart_->SendCommand(command).has_value();
 }
 
 std::string Ec801EMqtt::ErrorToString(int error_code) {
@@ -241,8 +243,4 @@ std::string Ec801EMqtt::ErrorToString(int error_code) {
         default:
             return "Unknown error";
     }
-}
-
-int Ec801EMqtt::GetLastError() {
-    return error_code_;
 }

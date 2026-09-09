@@ -18,7 +18,7 @@ Ec801ETcp::Ec801ETcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_
                     xEventGroupSetBits(event_group_handle_, EC801E_TCP_CONNECTED);
                 } else {
                     connected_ = false;
-                    last_error_ = arguments[1].int_value;  // Store error code from QIOPEN response
+                    last_error_ = NetworkError::FromEc801ESocket(arguments[1].int_value);
                     xEventGroupSetBits(event_group_handle_, EC801E_TCP_ERROR);
                     if (disconnect_callback_) {
                         disconnect_callback_();
@@ -73,7 +73,7 @@ Ec801ETcp::~Ec801ETcp() {
     }
 }
 
-bool Ec801ETcp::Connect(const std::string& host, int port) {
+NetworkResult<> Ec801ETcp::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_TCP_CONNECTED | EC801E_TCP_DISCONNECTED | EC801E_TCP_ERROR);
 
@@ -93,18 +93,22 @@ bool Ec801ETcp::Connect(const std::string& host, int port) {
 
     // 打开 TCP 连接
     command = "AT+QIOPEN=1," + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",0,1";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open TCP connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open TCP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     auto bits = xEventGroupWaitBits(event_group_handle_, EC801E_TCP_CONNECTED | EC801E_TCP_ERROR, pdTRUE, pdFALSE, TCP_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (bits & EC801E_TCP_ERROR) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
+        return Fail(last_error_);
     }
-    return true;
+    if (!(bits & EC801E_TCP_CONNECTED)) {
+        ESP_LOGE(TAG, "Timeout connecting to %s:%d", host.c_str(), port);
+        return Fail(NetworkError::Timeout());
+    }
+    return {};
 }
 
 void Ec801ETcp::Disconnect() {
@@ -157,8 +161,4 @@ int Ec801ETcp::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
-}
-
-int Ec801ETcp::GetLastError() {
-    return last_error_;
 }

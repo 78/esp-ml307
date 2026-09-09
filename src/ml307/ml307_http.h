@@ -27,16 +27,15 @@ public:
     void SetHeader(const std::string& key, const std::string& value) override;
     void SetContent(std::string&& content) override;
     void SetKeepAlive(bool enable) override;
-    bool Open(const std::string& method, const std::string& url) override;
+    NetworkResult<> Open(const std::string& method, const std::string& url) override;
     void Close() override;
-    int Read(char* buffer, size_t buffer_size) override;
-    int Write(const char* buffer, size_t buffer_size) override;
+    NetworkResult<int> Read(char* buffer, size_t buffer_size) override;
+    NetworkResult<int> Write(const char* buffer, size_t buffer_size) override;
 
-    int GetStatusCode() override;
+    NetworkResult<int> GetStatusCode() override;
     std::string GetResponseHeader(const std::string& key) const override;
     size_t GetBodyLength() override;
     std::string ReadAll() override;
-    int GetLastError() override;
 
 private:
     std::shared_ptr<AtUart> at_uart_;
@@ -67,7 +66,7 @@ private:
     bool response_chunked_ = false;
     bool keep_alive_ = false;
 
-    bool FetchHeaders();
+    NetworkResult<> FetchHeaders();
     void ParseResponseHeaders(const std::string& headers);
     std::string ErrorCodeToString(int error_code);
 };

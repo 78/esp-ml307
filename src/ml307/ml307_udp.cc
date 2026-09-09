@@ -18,7 +18,7 @@ Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_ua
                     xEventGroupClearBits(event_group_handle_, ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_CONNECTED);
                 } else {
-                    last_error_ = arguments[1].int_value;  // Store error code from MIPOPEN response
+                    last_error_ = NetworkError::FromMl307Socket(arguments[1].int_value);
                     xEventGroupSetBits(event_group_handle_, ML307_UDP_ERROR);
                 }
             }
@@ -66,12 +66,12 @@ Ml307Udp::~Ml307Udp() {
     }
 }
 
-bool Ml307Udp::Connect(const std::string& host, int port, int local_port) {
+NetworkResult<> Ml307Udp::Connect(const std::string& host, int port, int local_port) {
     local_port_ = local_port;
     return Connect(host, port);
 }
 
-bool Ml307Udp::Connect(const std::string& host, int port) {
+NetworkResult<> Ml307Udp::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, ML307_UDP_CONNECTED | ML307_UDP_DISCONNECTED | ML307_UDP_ERROR);
 
@@ -80,8 +80,8 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
     at_uart_->SendCommand(command);
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_UDP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_UDP_INITIALIZED)) {
-        ESP_LOGE(TAG, "Failed to initialize TCP connection");
-        return false;
+        ESP_LOGE(TAG, "Failed to initialize UDP connection");
+        return Fail(NetworkError::Timeout());
     }
 
     // 断开之前的连接
@@ -95,14 +95,14 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
 
     // Send binary receive HEX
     command = "AT+MIPCFG=\"encoding\"," + std::to_string(udp_id_) + ",0,1";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to set HEX encoding");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to set HEX encoding: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
     command = "AT+MIPCFG=\"ssl\"," + std::to_string(udp_id_) + ",0,0";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to set SSL configuration");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to set SSL configuration: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 打开 UDP 连接
@@ -112,19 +112,22 @@ bool Ml307Udp::Connect(const std::string& host, int port) {
         command = "AT+MIPOPEN=" + std::to_string(udp_id_) + ",\"UDP\",\"" + host + "\"," + std::to_string(port) + ","
          + std::to_string(local_port_) + ",0";
     }
-    if (!at_uart_->SendCommand(command)) {
-        last_error_ = at_uart_->GetCmeErrorCode();
-        ESP_LOGE(TAG, "Failed to open UDP connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open UDP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     bits = xEventGroupWaitBits(event_group_handle_, ML307_UDP_CONNECTED | ML307_UDP_ERROR, pdTRUE, pdFALSE, UDP_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (bits & ML307_UDP_ERROR) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
+        return Fail(last_error_);
     }
-    return true;
+    if (!(bits & ML307_UDP_CONNECTED)) {
+        ESP_LOGE(TAG, "Timeout connecting to %s:%d", host.c_str(), port);
+        return Fail(NetworkError::Timeout());
+    }
+    return {};
 }
 
 
@@ -149,8 +152,4 @@ int Ml307Udp::Send(const std::string& data) {
         return -1;
     }
     return data.size();
-}
-
-int Ml307Udp::GetLastError() {
-    return last_error_;
 }

@@ -56,6 +56,7 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
                     cv_.notify_one();  // 使用条件变量通知
                 } else if (type == "err") {
                     error_code_ = arguments[2].int_value;
+                    last_error_ = NetworkError::FromMl307Http(error_code_);
                     xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_ERROR);
                 } else if (type == "ind") {
                     xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_IND);
@@ -74,54 +75,55 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
     });
 }
 
-int Ml307Http::Read(char* buffer, size_t buffer_size) {
+NetworkResult<int> Ml307Http::Read(char* buffer, size_t buffer_size) {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+
     if (eof_ && body_.empty()) {
         return 0;
     }
-    
-    // 使用条件变量等待数据
+
     auto timeout = std::chrono::milliseconds(timeout_ms_);
-    bool received = cv_.wait_for(lock, timeout, [this] { 
-        return !body_.empty() || eof_; 
+    bool received = cv_.wait_for(lock, timeout, [this] {
+        return !body_.empty() || eof_;
     });
-    
+
     if (!received) {
-        ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received, body_offset: %u, eof: %d", 
+        ESP_LOGE(TAG, "Timeout waiting for HTTP content to be received, body_offset: %u, eof: %d",
                  body_offset_, eof_);
-        return -1;
+        return FailValue<int>(NetworkError::Timeout());
     }
     if (!instance_active_) {
-        return -1;
+        return FailValue<int>(last_error_.empty() ? NetworkError::ServerDisconnected() : last_error_);
     }
-    
+
     size_t bytes_to_read = std::min(body_.size(), buffer_size);
     std::memcpy(buffer, body_.data(), bytes_to_read);
     body_.erase(0, bytes_to_read);
-    
-    return bytes_to_read;
+
+    return static_cast<int>(bytes_to_read);
 }
 
-int Ml307Http::Write(const char* buffer, size_t buffer_size) {
-    if (buffer_size == 0) { // FIXME: 模组好像不支持发送空数据
+NetworkResult<int> Ml307Http::Write(const char* buffer, size_t buffer_size) {
+    if (buffer_size == 0) {  // FIXME: modem does not support sending empty data
         std::string command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",0,2,\"0D0A\"";
-        at_uart_->SendCommand(command);
+        if (auto result = at_uart_->SendCommand(command); !result) {
+            return FailValue<int>(result.error().ToNetworkError());
+        }
         return 0;
     }
 
-    // Every time no more than 4KB of data can be sent
     const size_t max_chunk_size = 4096;
     size_t buffer_sent = 0;
     while (buffer_sent < buffer_size) {
         size_t buffer_chunk_size = std::min(buffer_size - buffer_sent, max_chunk_size);
         std::string command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",1," + std::to_string(buffer_chunk_size);
-        if (!at_uart_->SendCommandWithData(command, 1000, true, buffer + buffer_sent, buffer_chunk_size)) {
-            return buffer_sent;
+        if (auto result = at_uart_->SendCommandWithData(command, 1000, true, buffer + buffer_sent, buffer_chunk_size);
+            !result) {
+            return FailValue<int>(result.error().ToNetworkError());
         }
         buffer_sent += buffer_chunk_size;
     }
-    return buffer_sent;
+    return static_cast<int>(buffer_sent);
 }
 
 Ml307Http::~Ml307Http() {
@@ -176,7 +178,7 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
     }
 }
 
-bool Ml307Http::Open(const std::string& method, const std::string& url) {
+NetworkResult<> Ml307Http::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
     
@@ -199,20 +201,20 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
     } else {
         // URL格式不正确
         ESP_LOGE(TAG, "Invalid URL format");
-        return false;
+        return Fail(NetworkError::InvalidArgument());
     }
 
     // 创建HTTP连接
     std::string command = "AT+MHTTPCREATE=\"" + protocol_ + "://" + host_ + "\"";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to create HTTP connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to create HTTP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
     if (!(bits & ML307_HTTP_EVENT_INITIALIZED)) {
         ESP_LOGE(TAG, "Timeout waiting for HTTP connection to be created");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
     request_chunked_ = method_supports_content && !content_.has_value();
     ESP_LOGI(TAG, "HTTP connection created, ID: %d, protocol: %s, host: %s", http_id_, protocol_.c_str(), host_.c_str());
@@ -265,31 +267,35 @@ bool Ml307Http::Open(const std::string& method, const std::string& url) {
         }
     }
     command = "AT+MHTTPREQUEST=" + std::to_string(http_id_) + "," + std::to_string(method_value) + ",0,";
-    if (!at_uart_->SendCommand(command + at_uart_->EncodeHex(path_))) {
-        ESP_LOGE(TAG, "Failed to send HTTP request");
-        return false;
+    if (auto result = at_uart_->SendCommand(command + at_uart_->EncodeHex(path_)); !result) {
+        ESP_LOGE(TAG, "Failed to send HTTP request: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     if (request_chunked_) {
         auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_IND, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
         if (!(bits & ML307_HTTP_EVENT_IND)) {
             ESP_LOGE(TAG, "Timeout waiting for HTTP IND");
-            return false;
+            return Fail(NetworkError::Timeout());
         }
     }
-    return true;
+    return {};
 }
 
-bool Ml307Http::FetchHeaders() {
-    // Wait for headers
-    auto bits = xEventGroupWaitBits(event_group_handle_, ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
+NetworkResult<> Ml307Http::FetchHeaders() {
+    auto bits = xEventGroupWaitBits(event_group_handle_,
+                                    ML307_HTTP_EVENT_HEADERS_RECEIVED | ML307_HTTP_EVENT_ERROR, pdTRUE,
+                                    pdFALSE, pdMS_TO_TICKS(timeout_ms_));
     if (bits & ML307_HTTP_EVENT_ERROR) {
         ESP_LOGE(TAG, "HTTP request error: %s", ErrorCodeToString(error_code_).c_str());
-        return false;
+        if (last_error_.empty()) {
+            last_error_ = NetworkError::FromMl307Http(error_code_);
+        }
+        return std::unexpected(last_error_);
     }
     if (!(bits & ML307_HTTP_EVENT_HEADERS_RECEIVED)) {
         ESP_LOGE(TAG, "Timeout waiting for HTTP headers to be received");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
 
     auto it = response_headers_.find("Content-Length");
@@ -298,13 +304,13 @@ bool Ml307Http::FetchHeaders() {
     }
 
     ESP_LOGI(TAG, "HTTP request successful, status code: %d", status_code_);
-    return true;
+    return {};
 }
 
-int Ml307Http::GetStatusCode() {
+NetworkResult<int> Ml307Http::GetStatusCode() {
     if (status_code_ == -1) {
-        if (!FetchHeaders()) {
-            return -1;
+        if (auto result = FetchHeaders(); !result) {
+            return std::unexpected(result.error());
         }
     }
     return status_code_;
@@ -333,10 +339,6 @@ std::string Ml307Http::ReadAll() {
     }
 
     return body_;
-}
-
-int Ml307Http::GetLastError() {
-    return error_code_;
 }
 
 void Ml307Http::Close() {

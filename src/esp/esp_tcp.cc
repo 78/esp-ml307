@@ -23,7 +23,7 @@ EspTcp::~EspTcp() {
     }
 }
 
-bool EspTcp::Connect(const std::string& host, int port) {
+NetworkResult<> EspTcp::Connect(const std::string& host, int port) {
     // 确保先断开已有连接
     if (connected_) {
         Disconnect();
@@ -36,27 +36,25 @@ bool EspTcp::Connect(const std::string& host, int port) {
     // host is domain
     struct hostent *server = gethostbyname(host.c_str());
     if (server == NULL) {
-        last_error_ = h_errno;
         ESP_LOGE(TAG, "Failed to get host by name");
-        return false;
+        return Fail(NetworkError::FromHErrno(h_errno));
     }
     memcpy(&server_addr.sin_addr, server->h_addr, server->h_length);
     ESP_LOGI(TAG, "Resolved %s -> %s", host.c_str(), inet_ntoa(*(struct in_addr *)server->h_addr));
 
     tcp_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_fd_ < 0) {
-        last_error_ = errno;
         ESP_LOGE(TAG, "Failed to create socket");
-        return false;
+        return Fail(NetworkError::FromErrno(errno));
     }
 
     int ret = connect(tcp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
     if (ret < 0) {
-        last_error_ = errno;
-        ESP_LOGE(TAG, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, last_error_);
+        auto err = NetworkError::FromErrno(errno);
+        ESP_LOGE(TAG, "Failed to connect to %s:%d: %s", host.c_str(), port, err.ToString().c_str());
         close(tcp_fd_);
         tcp_fd_ = -1;
-        return false;
+        return Fail(err);
     }
 
     connected_ = true;
@@ -68,7 +66,7 @@ bool EspTcp::Connect(const std::string& host, int port) {
         xEventGroupSetBits(tcp->event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
         vTaskDelete(NULL);
     }, "tcp_receive", 4096, this, 1, &receive_task_handle_);
-    return true;
+    return {};
 }
 
 void EspTcp::Disconnect() {
@@ -149,6 +147,3 @@ void EspTcp::ReceiveTask() {
     }
 }
 
-int EspTcp::GetLastError() {
-    return last_error_;
-}

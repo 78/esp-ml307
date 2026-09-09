@@ -10,6 +10,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
+#include "network_error.h"
 #include "tcp.h"
 
 class NetworkInterface;
@@ -22,7 +23,7 @@ public:
     void SetHeader(const char* key, const char* value);
     void SetReceiveBufferSize(size_t size);
     bool IsConnected() const;
-    bool Connect(const char* uri);
+    NetworkResult<> Connect(const char* uri);
     bool Send(const std::string& data);
     bool Send(const void* data, size_t len, bool binary = false, bool fin = true);
     void Ping();
@@ -31,7 +32,7 @@ public:
     void OnConnected(std::function<void()> callback);
     void OnDisconnected(std::function<void()> callback);
     void OnData(std::function<void(const char*, size_t, bool binary)> callback);
-    void OnError(std::function<void(int)> callback);
+    void OnError(std::function<void(const NetworkError& error)> callback);
     // Invoked when a Pong control frame (opcode 0xA) is received from the
     // peer, carrying the Pong's application data payload (which echoes the
     // payload of the Ping that triggered it). Lets callers implement an
@@ -40,10 +41,13 @@ public:
     // policy of its own.
     void OnPong(std::function<void(const char*, size_t)> callback);
 
-    // 获取最后一次错误码
-    int GetLastError();
-
 private:
+    NetworkResult<> Fail(NetworkError err) {
+        last_error_ = err;
+        return std::unexpected(err);
+    }
+
+    NetworkError last_error_{};
     NetworkInterface* network_;
     int connect_id_;
     std::unique_ptr<Tcp> tcp_;
@@ -62,7 +66,7 @@ private:
 
     std::map<std::string, std::string> headers_;
     std::function<void(const char*, size_t, bool binary)> on_data_;
-    std::function<void(int)> on_error_;
+    std::function<void(const NetworkError& error)> on_error_;
     std::function<void()> on_connected_;
     std::function<void()> on_disconnected_;
     std::function<void(const char*, size_t)> on_pong_;

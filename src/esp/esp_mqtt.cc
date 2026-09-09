@@ -15,7 +15,7 @@ EspMqtt::~EspMqtt() {
     }
 }
 
-bool EspMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
+NetworkResult<> EspMqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
     if (mqtt_client_handle_ != nullptr) {
         Disconnect();
     }
@@ -43,7 +43,16 @@ bool EspMqtt::Connect(const std::string broker_address, int broker_port, const s
 
     auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT | MQTT_ERROR_EVENT,
         pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
-    return bits & MQTT_CONNECTED_EVENT;
+    if (bits & MQTT_CONNECTED_EVENT) {
+        return {};
+    }
+    if (bits & MQTT_ERROR_EVENT) {
+        return std::unexpected(last_error_);
+    }
+    if (bits & MQTT_DISCONNECTED_EVENT) {
+        return Fail(NetworkError::ServerDisconnected());
+    }
+    return Fail(NetworkError::Timeout());
 }
 
 void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -88,7 +97,7 @@ void EspMqtt::MqttEventCallback(esp_event_base_t base, int32_t event_id, void *e
     case MQTT_EVENT_SUBSCRIBED:
         break;
     case MQTT_EVENT_ERROR: {
-        last_error_ = event->error_handle->esp_tls_last_esp_err;
+        last_error_ = NetworkError::FromEsp(event->error_handle->esp_tls_last_esp_err);
         xEventGroupSetBits(event_group_handle_, MQTT_ERROR_EVENT);
         const char* error_name = esp_err_to_name(event->error_handle->esp_tls_last_esp_err);
         ESP_LOGI(TAG, "MQTT error occurred: %s", error_name);
@@ -139,6 +148,3 @@ bool EspMqtt::IsConnected() {
     return connected_;
 }
 
-int EspMqtt::GetLastError() {
-    return last_error_;
-}

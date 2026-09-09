@@ -66,7 +66,7 @@ bool WebSocket::IsConnected() const {
     return connected_;
 }
 
-bool WebSocket::Connect(const char* uri) {
+NetworkResult<> WebSocket::Connect(const char* uri) {
     std::string uri_str(uri);
     std::string protocol, host, port, path;
     size_t pos = 0;
@@ -76,7 +76,7 @@ bool WebSocket::Connect(const char* uri) {
     next_pos = uri_str.find("://");
     if (next_pos == std::string::npos) {
         ESP_LOGE(TAG, "Invalid URI format");
-        return false;
+        return Fail(NetworkError::InvalidArgument());
     }
     protocol = uri_str.substr(0, next_pos);
     pos = next_pos + 3;
@@ -132,9 +132,9 @@ bool WebSocket::Connect(const char* uri) {
 
     connected_ = false;
     // 使用 tcp 建立连接
-    if (!tcp_->Connect(host, std::stoi(port))) {
-        ESP_LOGE(TAG, "Failed to connect to server");
-        return false;
+    if (auto result = tcp_->Connect(host, std::stoi(port)); !result) {
+        ESP_LOGE(TAG, "Failed to connect to server: %s", result.error().ToString().c_str());
+        return Fail(result.error());
     }
     uint32_t t_connected = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
@@ -168,7 +168,7 @@ bool WebSocket::Connect(const char* uri) {
 
     if (tcp_->Send(request) < 0) {
         ESP_LOGE(TAG, "Failed to send WebSocket handshake request");
-        return false;
+        return Fail(NetworkError::TransmitFailed());
     }
 
     // 等待握手完成，超时时间10秒
@@ -187,16 +187,17 @@ bool WebSocket::Connect(const char* uri) {
         if (on_connected_) {
             on_connected_();
         }
-        return true;
+        return {};
     } else if (bits & HANDSHAKE_FAILED_BIT) {
         ESP_LOGE(TAG, "WebSocket handshake failed");
+        auto err = NetworkError::ProtocolError();
         if (on_error_) {
-            on_error_(-1);
+            on_error_(err);
         }
-        return false;
+        return Fail(err);
     } else {
         ESP_LOGE(TAG, "WebSocket handshake timeout");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
 }
 
@@ -276,7 +277,7 @@ void WebSocket::OnData(std::function<void(const char*, size_t, bool binary)> cal
     on_data_ = callback;
 }
 
-void WebSocket::OnError(std::function<void(int)> callback) {
+void WebSocket::OnError(std::function<void(const NetworkError& error)> callback) {
     on_error_ = callback;
 }
 
@@ -284,12 +285,6 @@ void WebSocket::OnPong(std::function<void(const char*, size_t)> callback) {
     on_pong_ = callback;
 }
 
-int WebSocket::GetLastError() {
-    if (tcp_) {
-        return tcp_->GetLastError();
-    }
-    return 0;  // No error if TCP connection doesn't exist
-}
 
 void WebSocket::OnTcpData(const std::string& data) {
     // 将新数据追加到接收缓冲区

@@ -21,10 +21,9 @@ public:
     Ec801EUdp(std::shared_ptr<AtUart> at_uart, int udp_id);
     ~Ec801EUdp();
 
-    bool Connect(const std::string& host, int port) override;
+    NetworkResult<> Connect(const std::string& host, int port) override;
     void Disconnect() override;
     int Send(const std::string& data) override;
-    int GetLastError() override;
 
 private:
     std::shared_ptr<AtUart> at_uart_;
@@ -32,7 +31,6 @@ private:
     bool instance_active_ = false;
     EventGroupHandle_t event_group_handle_;
     std::list<UrcCallback>::iterator urc_callback_it_;
-    int last_error_ = 0;
 };
 
 #endif // EC801E_UDP_H

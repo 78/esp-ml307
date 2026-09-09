@@ -44,9 +44,9 @@ bool Ec801EAtModem::SetSleepMode(bool enable, int delay_seconds) {
         if (delay_seconds > 0) {
             at_uart_->SendCommand("AT+QSCLKEX=1," + std::to_string(delay_seconds) + ",30");
         }
-        return at_uart_->SendCommand("AT+QSCLK=1");
+        return at_uart_->SendCommand("AT+QSCLK=1").has_value();
     } else {
-        return at_uart_->SendCommand("AT+QSCLK=0");
+        return at_uart_->SendCommand("AT+QSCLK=0").has_value();
     }
 }
 

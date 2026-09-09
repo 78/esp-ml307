@@ -12,7 +12,7 @@ Ml307Mqtt::Ml307Mqtt(std::shared_ptr<AtUart> at_uart, int mqtt_id) : at_uart_(at
                 auto type = arguments[0].string_value;
                 if (type == "conn") {
                     int error_code = arguments[2].int_value;
-                    last_error_ = error_code;  // Store error code
+                    last_error_ = NetworkError::FromMl307Mqtt(error_code);
                     if (error_code == 0) {
                         if (!connected_) {
                             connected_ = true;
@@ -67,7 +67,7 @@ Ml307Mqtt::~Ml307Mqtt() {
     vEventGroupDelete(event_group_handle_);
 }
 
-bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
+NetworkResult<> Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const std::string client_id, const std::string username, const std::string password) {
     EventBits_t bits;
     if (IsConnected()) {
         // 断开之前的连接
@@ -75,54 +75,58 @@ bool Ml307Mqtt::Connect(const std::string broker_address, int broker_port, const
         bits = xEventGroupWaitBits(event_group_handle_, MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
         if (!(bits & MQTT_DISCONNECTED_EVENT)) {
             ESP_LOGE(TAG, "Failed to disconnect from previous connection");
-            return false;
+            return Fail(NetworkError::Timeout());
         }
     }
 
     if (broker_port == 8883) {
-        if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1")) {
-            ESP_LOGE(TAG, "Failed to set MQTT to use SSL");
-            return false;
+        if (auto result = at_uart_->SendCommand(std::string("AT+MQTTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1"); !result) {
+            ESP_LOGE(TAG, "Failed to set MQTT to use SSL: %s", result.error().ToString().c_str());
+            return Fail(result.error().ToNetworkError());
         }
     }
 
     // Set clean session
-    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"clean\",") + std::to_string(mqtt_id_) + ",1")) {
-        ESP_LOGE(TAG, "Failed to set MQTT clean session");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+MQTTCFG=\"clean\",") + std::to_string(mqtt_id_) + ",1"); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT clean session: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // Set keep alive and ping interval both to the same value
-    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"keepalive\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
-        ESP_LOGE(TAG, "Failed to set MQTT keepalive interval");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+MQTTCFG=\"keepalive\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_)); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT keepalive interval: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
-    if (!at_uart_->SendCommand(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_))) {
-        ESP_LOGE(TAG, "Failed to set MQTT ping interval");
-        return false;
+    if (auto result = at_uart_->SendCommand(std::string("AT+MQTTCFG=\"pingreq\",") + std::to_string(mqtt_id_) + "," + std::to_string(keep_alive_seconds_)); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT ping interval: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // Set HEX encoding (ASCII for sending, HEX for receiving)
-    if (!at_uart_->SendCommand("AT+MQTTCFG=\"encoding\"," + std::to_string(mqtt_id_) + ",0,1")) {
-        ESP_LOGE(TAG, "Failed to set MQTT to use HEX encoding");
-        return false;
+    if (auto result = at_uart_->SendCommand("AT+MQTTCFG=\"encoding\"," + std::to_string(mqtt_id_) + ",0,1"); !result) {
+        ESP_LOGE(TAG, "Failed to set MQTT to use HEX encoding: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     xEventGroupClearBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT);
     // 创建MQTT连接
     std::string command = "AT+MQTTCONN=" + std::to_string(mqtt_id_) + ",\"" + broker_address + "\"," + std::to_string(broker_port) + ",\"" + client_id + "\",\"" + username + "\",\"" + password + "\"";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to create MQTT connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to create MQTT connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     bits = xEventGroupWaitBits(event_group_handle_, MQTT_CONNECTED_EVENT | MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
-    if (!(bits & MQTT_CONNECTED_EVENT)) {
-        ESP_LOGE(TAG, "Failed to connect to MQTT broker");
-        return false;
+    if (bits & MQTT_CONNECTED_EVENT) {
+        return {};
     }
-    return true;
+    if (bits & MQTT_DISCONNECTED_EVENT) {
+        ESP_LOGE(TAG, "Failed to connect to MQTT broker");
+        return Fail(last_error_);
+    }
+    ESP_LOGE(TAG, "Timeout connecting to MQTT broker");
+    return Fail(NetworkError::Timeout());
 }
 
 bool Ml307Mqtt::IsConnected() {
@@ -151,7 +155,7 @@ bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int 
     std::string command = "AT+MQTTPUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\",";
     command += std::to_string(qos) + ",0,0,";
     command += std::to_string(payload.size());
-    return at_uart_->SendCommandWithData(command, 1000, true, payload.data(), payload.size());
+    return at_uart_->SendCommandWithData(command, 1000, true, payload.data(), payload.size()).has_value();
 }
 
 bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {
@@ -159,7 +163,7 @@ bool Ml307Mqtt::Subscribe(const std::string topic, int qos) {
         return false;
     }
     std::string command = "AT+MQTTSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\"," + std::to_string(qos);
-    return at_uart_->SendCommand(command);
+    return at_uart_->SendCommand(command).has_value();
 }
 
 bool Ml307Mqtt::Unsubscribe(const std::string topic) {
@@ -167,7 +171,7 @@ bool Ml307Mqtt::Unsubscribe(const std::string topic) {
         return false;
     }
     std::string command = "AT+MQTTUNSUB=" + std::to_string(mqtt_id_) + ",\"" + topic + "\"";
-    return at_uart_->SendCommand(command);
+    return at_uart_->SendCommand(command).has_value();
 }
 
 std::string Ml307Mqtt::ErrorToString(int error_code) {
@@ -191,8 +195,4 @@ std::string Ml307Mqtt::ErrorToString(int error_code) {
         default:
             return "Unknown error";
     }
-}
-
-int Ml307Mqtt::GetLastError() {
-    return last_error_;
 }

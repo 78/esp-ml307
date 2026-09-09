@@ -21,11 +21,10 @@ public:
     Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id);
     ~Ml307Udp();
 
-    bool Connect(const std::string& host, int port) override;
-    bool Connect(const std::string& host, int port, int local_port);
+    NetworkResult<> Connect(const std::string& host, int port) override;
+    NetworkResult<> Connect(const std::string& host, int port, int local_port);
     void Disconnect() override;
     int Send(const std::string& data) override;
-    int GetLastError() override;
 
 private:
     std::shared_ptr<AtUart> at_uart_;
@@ -34,7 +33,6 @@ private:
     bool instance_active_ = false;
     EventGroupHandle_t event_group_handle_;
     std::list<UrcCallback>::iterator urc_callback_it_;
-    int last_error_ = 0;
 };
 
 #endif // ML307_UDP_H

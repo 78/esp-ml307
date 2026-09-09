@@ -18,7 +18,7 @@ Ec801ESsl::Ec801ESsl(std::shared_ptr<AtUart> at_uart, int ssl_id) : at_uart_(at_
                     xEventGroupSetBits(event_group_handle_, EC801E_SSL_CONNECTED);
                 } else {
                     connected_ = false;
-                    last_error_ = arguments[1].int_value;  // Store error code from QSSLOPEN response
+                    last_error_ = NetworkError::FromEc801ESocket(arguments[1].int_value);
                     xEventGroupSetBits(event_group_handle_, EC801E_SSL_ERROR);
                 }
             }
@@ -71,7 +71,7 @@ Ec801ESsl::~Ec801ESsl() {
     at_uart_->UnregisterUrcCallback(urc_callback_it_);
 }
 
-bool Ec801ESsl::Connect(const std::string& host, int port) {
+NetworkResult<> Ec801ESsl::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, EC801E_SSL_CONNECTED | EC801E_SSL_DISCONNECTED | EC801E_SSL_ERROR);
 
@@ -95,18 +95,22 @@ bool Ec801ESsl::Connect(const std::string& host, int port) {
 
     // 打开 TCP 连接
     command = "AT+QSSLOPEN=1,1," + std::to_string(ssl_id_) + ",\"" + host + "\"," + std::to_string(port) + ",1";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to open TCP connection");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open TCP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     auto bits = xEventGroupWaitBits(event_group_handle_, EC801E_SSL_CONNECTED | EC801E_SSL_ERROR, pdTRUE, pdFALSE, SSL_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (bits & EC801E_SSL_ERROR) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
+        return Fail(last_error_);
     }
-    return true;
+    if (!(bits & EC801E_SSL_CONNECTED)) {
+        ESP_LOGE(TAG, "Timeout connecting to %s:%d", host.c_str(), port);
+        return Fail(NetworkError::Timeout());
+    }
+    return {};
 }
 
 
@@ -158,8 +162,4 @@ int Ec801ESsl::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
-}
-
-int Ec801ESsl::GetLastError() {
-    return last_error_;
 }

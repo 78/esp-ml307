@@ -16,7 +16,7 @@ Ml307Tcp::Ml307Tcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_ua
                     xEventGroupClearBits(event_group_handle_, ML307_TCP_DISCONNECTED | ML307_TCP_ERROR);
                     xEventGroupSetBits(event_group_handle_, ML307_TCP_CONNECTED);
                 } else {
-                    last_error_ = arguments[1].int_value;  // Store error code from MIPOPEN response
+                    last_error_ = NetworkError::FromMl307Socket(arguments[1].int_value);
                     xEventGroupSetBits(event_group_handle_, ML307_TCP_ERROR);
                 }
             }
@@ -69,7 +69,7 @@ Ml307Tcp::~Ml307Tcp() {
     }
 }
 
-bool Ml307Tcp::Connect(const std::string& host, int port) {
+NetworkResult<> Ml307Tcp::Connect(const std::string& host, int port) {
     // Clear bits
     xEventGroupClearBits(event_group_handle_, ML307_TCP_CONNECTED | ML307_TCP_DISCONNECTED | ML307_TCP_ERROR);
 
@@ -79,7 +79,7 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_TCP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(TCP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_TCP_INITIALIZED)) {
         ESP_LOGE(TAG, "Failed to initialize TCP connection");
-        return false;
+        return Fail(NetworkError::Timeout());
     }
 
     // 断开之前的连接
@@ -94,31 +94,34 @@ bool Ml307Tcp::Connect(const std::string& host, int port) {
     // 配置SSL（子类可以重写）
     if (!ConfigureSsl(port)) {
         ESP_LOGE(TAG, "Failed to configure SSL");
-        return false;
+        return Fail(NetworkError::TlsFailed());
     }
 
     // 使用 HEX 编码
     command = "AT+MIPCFG=\"encoding\"," + std::to_string(tcp_id_) + ",1,1";
-    if (!at_uart_->SendCommand(command)) {
-        ESP_LOGE(TAG, "Failed to set HEX encoding");
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to set HEX encoding: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 打开 TCP 连接
     command = "AT+MIPOPEN=" + std::to_string(tcp_id_) + ",\"TCP\",\"" + host + "\"," + std::to_string(port) + ",,0";
-    if (!at_uart_->SendCommand(command)) {
-        last_error_ = at_uart_->GetCmeErrorCode();
-        ESP_LOGE(TAG, "Failed to open TCP connection, error=%d", last_error_);
-        return false;
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGE(TAG, "Failed to open TCP connection: %s", result.error().ToString().c_str());
+        return Fail(result.error().ToNetworkError());
     }
 
     // 等待连接完成
     bits = xEventGroupWaitBits(event_group_handle_, ML307_TCP_CONNECTED | ML307_TCP_ERROR, pdTRUE, pdFALSE, TCP_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
     if (bits & ML307_TCP_ERROR) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
+        return Fail(last_error_);
     }
-    return true;
+    if (!(bits & ML307_TCP_CONNECTED)) {
+        ESP_LOGE(TAG, "Timeout connecting to %s:%d", host.c_str(), port);
+        return Fail(NetworkError::Timeout());
+    }
+    return {};
 }
 
 void Ml307Tcp::Disconnect() {
@@ -199,8 +202,4 @@ int Ml307Tcp::Send(const std::string& data) {
         total_sent += chunk_size;
     }
     return data.size();
-}
-
-int Ml307Tcp::GetLastError() {
-    return last_error_;
 }

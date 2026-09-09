@@ -9,25 +9,21 @@
 
 static const char* TAG = "AtModem";
 
-std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, int baud_rate, int timeout_ms) {
-    // 调用带 RI pin 的版本，RI pin 默认为 GPIO_NUM_NC
+AtValue<std::unique_ptr<AtModem>> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, int baud_rate, int timeout_ms) {
     return Detect(tx_pin, rx_pin, dtr_pin, GPIO_NUM_NC, baud_rate, timeout_ms);
 }
 
-std::unique_ptr<AtModem> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate, int timeout_ms) {
-    // 创建AtUart进行检测
+AtValue<std::unique_ptr<AtModem>> AtModem::Detect(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_num_t ri_pin, int baud_rate, int timeout_ms) {
     auto uart = std::make_shared<AtUart>(tx_pin, rx_pin, dtr_pin, ri_pin);
     uart->Initialize();
-    
-    // 设置波特率
-    if (!uart->SetBaudRate(baud_rate, timeout_ms)) {
-        return nullptr;
+
+    if (auto result = uart->SetBaudRate(baud_rate, timeout_ms); !result) {
+        return std::unexpected(result.error());
     }
-    
-    // 发送AT+CGMR（或ATI）命令获取模组型号
-    if (!uart->SendCommand("AT+CGMR", 3000)) {
-        ESP_LOGE(TAG, "Failed to send AT+CGMR command");
-        return nullptr;
+
+    if (auto result = uart->SendCommand("AT+CGMR", 3000); !result) {
+        ESP_LOGE(TAG, "Failed to send AT+CGMR command: %s", result.error().ToString().c_str());
+        return std::unexpected(result.error());
     }
     
     std::string response = uart->GetResponse();
@@ -89,11 +85,10 @@ NetworkStatus AtModem::WaitForNetworkReady(int timeout_ms) {
     
     // 检查 SIM 卡是否准备好
     for (int i = 0; i < 10; i++) {
-        if (at_uart_->SendCommand("AT+CPIN?")) {
+        if (auto result = at_uart_->SendCommand("AT+CPIN?"); result) {
             pin_ready_ = true;
             break;
-        }
-        if (at_uart_->GetCmeErrorCode() == 10) {
+        } else if (result.error().cme == 10) {
             pin_ready_ = false;
             return NetworkStatus::ErrorInsertPin;
         }

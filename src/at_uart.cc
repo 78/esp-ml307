@@ -391,7 +391,7 @@ bool AtUart::ParseResponse() {
 
 void AtUart::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
     if (command == "CME ERROR") {
-        cme_error_code_ = arguments[0].int_value;
+        last_error_ = {AtErrc::CmeError, arguments[0].int_value};
         xEventGroupSetBits(event_group_handle_, AT_EVENT_COMMAND_ERROR);
         return;
     }
@@ -433,40 +433,55 @@ bool AtUart::DetectBaudRate(int timeout_ms) {
     return false;
 }
 
-bool AtUart::SetBaudRate(int new_baud_rate, int timeout_ms) {
+AtResult AtUart::SetBaudRate(int new_baud_rate, int timeout_ms) {
     if (!DetectBaudRate(timeout_ms)) {
         ESP_LOGE(TAG, "Failed to detect baud rate");
-        return false;
+        return Fail({AtErrc::Timeout});
     }
     if (new_baud_rate == baud_rate_) {
-        return true;
+        return {};
     }
-    // Set new baud rate
-    if (!SendCommand(std::string("AT+IPR=") + std::to_string(new_baud_rate))) {
+    if (auto result = SendCommand(std::string("AT+IPR=") + std::to_string(new_baud_rate)); !result) {
         ESP_LOGI(TAG, "Failed to set baud rate to %d", new_baud_rate);
-        return false;
+        return result;
     }
     uart_set_baudrate(uart_num_, new_baud_rate);
     baud_rate_ = new_baud_rate;
     ESP_LOGI(TAG, "Set baud rate to %d", new_baud_rate);
-    return true;
+    return {};
 }
 
-bool AtUart::SendData(const char* data, size_t length) {
+AtResult AtUart::SendData(const char* data, size_t length) {
     if (!initialized_) {
         ESP_LOGE(TAG, "UART未初始化");
-        return false;
+        return Fail({AtErrc::NotInitialized});
     }
-    
+
     esp_err_t ret = uart_uhci_.Transmit(reinterpret_cast<const uint8_t*>(data), length);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UHCI transmit failed: %s", esp_err_to_name(ret));
-        return false;
+        return Fail({AtErrc::TransmitFailed, 0, ret});
     }
-    return true;
+    return {};
 }
 
-bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, bool add_crlf, const char* data, size_t data_length) {
+AtResult AtUart::WaitCommandComplete(size_t timeout_ms) {
+    auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR,
+                                    pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    wait_for_response_ = false;
+    if (bits & AT_EVENT_COMMAND_DONE) {
+        return {};
+    }
+    if (bits & AT_EVENT_COMMAND_ERROR) {
+        if (last_error_.code != AtErrc::CmeError) {
+            last_error_ = {AtErrc::CommandError};
+        }
+        return std::unexpected(last_error_);
+    }
+    return Fail({AtErrc::Timeout});
+}
+
+AtResult AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, bool add_crlf, const char* data, size_t data_length) {
     std::lock_guard<std::mutex> lock(command_mutex_);
     if (debug_) {
         ESP_LOGI(TAG, ">> %.64s (%u bytes)", command.data(), command.length());
@@ -474,26 +489,24 @@ bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, 
 
     xEventGroupClearBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR);
     wait_for_response_ = true;
-    cme_error_code_ = 0;
+    last_error_ = {};
     {
         std::lock_guard<std::mutex> response_lock(mutex_);
         response_.clear();
     }
 
     if (add_crlf) {
-        if (!SendData((command + "\r\n").data(), command.length() + 2)) {
-            return false;
+        if (auto result = SendData((command + "\r\n").data(), command.length() + 2); !result) {
+            return result;
         }
     } else {
-        if (!SendData(command.data(), command.length())) {
-            return false;
+        if (auto result = SendData(command.data(), command.length()); !result) {
+            return result;
         }
     }
     if (timeout_ms > 0) {
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
-        wait_for_response_ = false;
-        if (!(bits & AT_EVENT_COMMAND_DONE)) {
-            return false;
+        if (auto result = WaitCommandComplete(timeout_ms); !result) {
+            return result;
         }
     } else {
         wait_for_response_ = false;
@@ -501,19 +514,17 @@ bool AtUart::SendCommandWithData(const std::string& command, size_t timeout_ms, 
 
     if (data && data_length > 0) {
         wait_for_response_ = true;
-        if (!SendData(data, data_length)) {
-            return false;
+        if (auto result = SendData(data, data_length); !result) {
+            return result;
         }
-        auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_COMMAND_DONE | AT_EVENT_COMMAND_ERROR, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
-        wait_for_response_ = false;
-        if (!(bits & AT_EVENT_COMMAND_DONE)) {
-            return false;
+        if (auto result = WaitCommandComplete(timeout_ms); !result) {
+            return result;
         }
     }
-    return true;
+    return {};
 }
 
-bool AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add_crlf) {
+AtResult AtUart::SendCommand(const std::string& command, size_t timeout_ms, bool add_crlf) {
     return SendCommandWithData(command, timeout_ms, add_crlf, nullptr, 0);
 }
 
