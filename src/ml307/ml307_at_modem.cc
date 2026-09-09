@@ -28,11 +28,21 @@ void Ml307AtModem::ResetConnections() {
     at_uart_->SendCommand("AT+MHTTPDEL=3");
 }
 
+std::string Ml307AtModem::GetIccid() {
+    // ML307 uses AT+MCCID instead of the generic AT+ICCID.
+    if (!at_uart_->SendCommand("AT+MCCID")) {
+        ESP_LOGE(TAG, "Failed to send AT+MCCID command");
+    }
+    return iccid_;
+}
+
 void Ml307AtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
     // Handle Common URC
     AtModem::HandleUrc(command, arguments);
     // Handle ML307 URC
-    if (command == "MIPCALL" && arguments.size() >= 3) {
+    if ((command == "MCCID") && arguments.size() >= 1) {
+        iccid_ = arguments[0].string_value;
+    } else if (command == "MIPCALL" && arguments.size() >= 3) {
         if (arguments[1].int_value == 1) {
             auto ip = arguments[2].string_value;
             ESP_LOGI(TAG, "PDP Context %d IP: %s", arguments[0].int_value, ip.c_str());

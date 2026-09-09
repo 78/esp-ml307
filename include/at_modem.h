@@ -67,7 +67,7 @@ public:
 
     // 模组信息获取
     std::string GetImei();
-    std::string GetIccid();
+    virtual std::string GetIccid();
     std::string GetModuleRevision();
     CeregState GetRegistrationState();
     std::string GetCarrierName();

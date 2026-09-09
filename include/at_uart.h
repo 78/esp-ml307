@@ -70,8 +70,8 @@ public:
     int GetBaudRate() const { return baud_rate_; }
     
     // Data Sending
-    bool SendCommand(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true);
-    bool SendCommandWithData(const std::string& command, size_t timeout_ms = 1000, bool add_crlf = true, const char* data = nullptr, size_t data_length = 0);
+    bool SendCommand(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true);
+    bool SendCommandWithData(const std::string& command, size_t timeout_ms = 3000, bool add_crlf = true, const char* data = nullptr, size_t data_length = 0);
     std::string GetResponse() const;
     int GetCmeErrorCode() const { return cme_error_code_; }
     

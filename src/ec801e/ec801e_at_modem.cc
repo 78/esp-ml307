@@ -23,9 +23,20 @@ Ec801EAtModem::Ec801EAtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart)
     at_uart_->SendCommand("AT+QURCCFG=\"urcport\",\"uart1\"");
 }
 
+std::string Ec801EAtModem::GetIccid() {
+    // EC801E uses AT+ECICCID instead of the generic AT+ICCID.
+    if (!at_uart_->SendCommand("AT+ECICCID")) {
+        ESP_LOGE(TAG, "Failed to send AT+ECICCID command");
+    }
+    return iccid_;
+}
+
 void Ec801EAtModem::HandleUrc(const std::string& command, const std::vector<AtArgumentValue>& arguments) {
     // Handle Common URC
     AtModem::HandleUrc(command, arguments);
+    if (command == "ECICCID" && arguments.size() >= 1) {
+        iccid_ = arguments[0].string_value;
+    }
 }
 
 bool Ec801EAtModem::SetSleepMode(bool enable, int delay_seconds) {

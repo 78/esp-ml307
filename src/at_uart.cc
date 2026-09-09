@@ -164,7 +164,7 @@ void AtUart::Initialize() {
         auto at_uart = (AtUart*)arg;
         at_uart->ReceiveTask();
         vTaskDelete(NULL);
-    }, "modem_receive", 1024, this, configMAX_PRIORITIES - 2, &receive_task_handle_);
+    }, "modem_receive", 2048, this, configMAX_PRIORITIES - 2, &receive_task_handle_);
 
     // EventTask: lower priority, handles parsing and URC callbacks
     xTaskCreate([](void* arg) {

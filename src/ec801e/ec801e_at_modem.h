@@ -9,6 +9,7 @@ public:
     ~Ec801EAtModem() override = default;
 
     bool SetSleepMode(bool enable, int delay_seconds=0) override;
+    std::string GetIccid() override;
 
     // 实现基类的纯虚函数
     std::unique_ptr<Http> CreateHttp(int connect_id) override;
