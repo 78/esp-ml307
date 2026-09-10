@@ -262,14 +262,17 @@ void HttpClient::OnTcpData(const std::string& data) {
     // 而 connected_ 只能由 OnTcpDisconnected() 设置，它需要获取 mutex_。
     // 如果在等待期间持有 mutex_，OnTcpDisconnected() 将永远无法获取锁，
     // 造成死锁（在服务器提前关闭连接、接收任务与本函数并发执行时触发）。
+    //
+    // 背压只看已入队的未读数据，不把本包 size 算进去：
+    // 否则单个 >=8KB 的包在队列已空时也会永远等不到谓词成立。
     {
         std::unique_lock<std::mutex> read_lock(read_mutex_);
-        write_cv_.wait(read_lock, [this, size=data.size()] {
-            size_t total_size = size;
+        write_cv_.wait(read_lock, [this] {
+            size_t queued_size = 0;
             for (const auto& chunk : body_chunks_) {
-                total_size += chunk.data.size();
+                queued_size += chunk.available();
             }
-            return total_size < MAX_BODY_CHUNKS_SIZE || !connected_;
+            return queued_size < MAX_BODY_CHUNKS_SIZE || !connected_;
         });
     }
 
@@ -296,6 +299,9 @@ void HttpClient::OnTcpDisconnected() {
     }
 
     cv_.notify_all();  // 通知所有等待的读取操作
+    // 唤醒 OnTcpData 中因 body_chunks_ 背压而阻塞的等待，
+    // 否则 connected_==false 时若无人 notify，接收回调会永久卡在 write_cv_ 上。
+    write_cv_.notify_all();
 }
 
 void HttpClient::ProcessReceivedData() {
@@ -735,30 +741,23 @@ void HttpClient::AddBodyData(std::string&& data) {
 }
 
 std::string HttpClient::ReadAll() {
-    std::unique_lock<std::mutex> lock(mutex_);
-
-    // 等待完成或出错
-    auto timeout = std::chrono::milliseconds(timeout_ms_);
-    bool completed = cv_.wait_for(lock, timeout, [this] {
-        return eof_ || connection_error_;
-    });
-
-    if (!completed) {
-        ESP_LOGE(TAG, "Wait for HTTP content receive complete timeout");
-        return "";  // 超时返回空字符串
-    }
-
-    // 如果连接异常断开，返回空字符串并记录错误
-    if (connection_error_) {
-        ESP_LOGE(TAG, "Cannot read all data: connection closed prematurely");
-        return "";
-    }
-
-    // 收集所有数据
+    // 必须通过 Read() 持续排空 body_chunks_：
+    // OnTcpData() 在队列达到 MAX_BODY_CHUNKS_SIZE (8KB) 时会在 write_cv_ 上阻塞，
+    // 直到有消费者读取。若这里只等 eof_ 而不读取，大于 8KB 的响应会与接收回调互相等待而死锁。
+    // 超时沿用 Read()：两次可读数据之间最多等待 timeout_ms_，而不是整份 body 一次性超时。
     std::string result;
-    std::lock_guard<std::mutex> read_lock(read_mutex_);
-    for (const auto& chunk : body_chunks_) {
-        result.append(chunk.data);
+    char buffer[1024];
+
+    while (true) {
+        auto bytes_read = Read(buffer, sizeof(buffer));
+        if (!bytes_read) {
+            ESP_LOGE(TAG, "Cannot read all data: %s", bytes_read.error().ToString().c_str());
+            return "";
+        }
+        if (*bytes_read == 0) {
+            break;
+        }
+        result.append(buffer, static_cast<size_t>(*bytes_read));
     }
 
     return result;
