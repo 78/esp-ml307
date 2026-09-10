@@ -746,10 +746,15 @@ std::string HttpClient::ReadAll() {
     // 直到有消费者读取。若这里只等 eof_ 而不读取，大于 8KB 的响应会与接收回调互相等待而死锁。
     // 超时沿用 Read()：两次可读数据之间最多等待 timeout_ms_，而不是整份 body 一次性超时。
     std::string result;
-    char buffer[1024];
+    if (content_length_ > 0) {
+        result.reserve(content_length_);
+    }
+    // 读缓冲放在堆上：ReadAll() 会从 OTA / MCP / 相机 explain 等小栈任务调用，
+    // 1KB 的栈数组容易把剩余栈打穿。
+    std::string buffer(1024, '\0');
 
     while (true) {
-        auto bytes_read = Read(buffer, sizeof(buffer));
+        auto bytes_read = Read(buffer.data(), buffer.size());
         if (!bytes_read) {
             ESP_LOGE(TAG, "Cannot read all data: %s", bytes_read.error().ToString().c_str());
             return "";
@@ -757,7 +762,7 @@ std::string HttpClient::ReadAll() {
         if (*bytes_read == 0) {
             break;
         }
-        result.append(buffer, static_cast<size_t>(*bytes_read));
+        result.append(buffer.data(), static_cast<size_t>(*bytes_read));
     }
 
     return result;
