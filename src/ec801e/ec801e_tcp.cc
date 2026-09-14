@@ -78,15 +78,15 @@ NetworkResult<> Ec801ETcp::Connect(const std::string& host, int port) {
     xEventGroupClearBits(event_group_handle_, EC801E_TCP_CONNECTED | EC801E_TCP_DISCONNECTED | EC801E_TCP_ERROR);
 
     // Keep data in one line; Use HEX encoding in response
-    at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1");
+    static_cast<void>(at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1"));
 
     // 检查这个 id 是否已经连接
     std::string command = "AT+QISTATE=1," + std::to_string(tcp_id_);
-    at_uart_->SendCommand(command);
+    static_cast<void>(at_uart_->SendCommand(command));
 
     // 断开之前的连接（不触发回调事件）
     if (instance_active_) {
-        at_uart_->SendCommand("AT+QICLOSE=" + std::to_string(tcp_id_));
+        static_cast<void>(at_uart_->SendCommand("AT+QICLOSE=" + std::to_string(tcp_id_)));
         xEventGroupWaitBits(event_group_handle_, EC801E_TCP_DISCONNECTED, pdTRUE, pdFALSE, TCP_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
         instance_active_ = false;
     }

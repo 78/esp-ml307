@@ -18,9 +18,9 @@
 Ec801EAtModem::Ec801EAtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart) {
     // 子类特定的初始化在这里
     // ATE0 关闭 echo
-    at_uart_->SendCommand("ATE0");
+    static_cast<void>(at_uart_->SendCommand("ATE0"));
     // 设置 URC 端口为 UART1
-    at_uart_->SendCommand("AT+QURCCFG=\"urcport\",\"uart1\"");
+    static_cast<void>(at_uart_->SendCommand("AT+QURCCFG=\"urcport\",\"uart1\""));
 }
 
 std::string Ec801EAtModem::GetIccid() {
@@ -42,7 +42,7 @@ void Ec801EAtModem::HandleUrc(const std::string& command, const std::vector<AtAr
 bool Ec801EAtModem::SetSleepMode(bool enable, int delay_seconds) {
     if (enable) {
         if (delay_seconds > 0) {
-            at_uart_->SendCommand("AT+QSCLKEX=1," + std::to_string(delay_seconds) + ",30");
+            static_cast<void>(at_uart_->SendCommand("AT+QSCLKEX=1," + std::to_string(delay_seconds) + ",30"));
         }
         return at_uart_->SendCommand("AT+QSCLK=1").has_value();
     } else {

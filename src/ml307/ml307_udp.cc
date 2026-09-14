@@ -77,7 +77,7 @@ NetworkResult<> Ml307Udp::Connect(const std::string& host, int port) {
 
     // 检查这个 id 是否已经连接
     std::string command = "AT+MIPSTATE=" + std::to_string(udp_id_);
-    at_uart_->SendCommand(command);
+    static_cast<void>(at_uart_->SendCommand(command));
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_UDP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(UDP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_UDP_INITIALIZED)) {
         ESP_LOGE(TAG, "Failed to initialize UDP connection");
@@ -136,7 +136,7 @@ void Ml307Udp::Disconnect() {
         return;
     }
 
-    at_uart_->SendCommand("AT+MIPCLOSE=" + std::to_string(udp_id_));
+    static_cast<void>(at_uart_->SendCommand("AT+MIPCLOSE=" + std::to_string(udp_id_)));
     connected_ = false;
 }
 

@@ -75,7 +75,7 @@ NetworkResult<> Ml307Tcp::Connect(const std::string& host, int port) {
 
     // 检查这个 id 是否已经连接
     std::string command = "AT+MIPSTATE=" + std::to_string(tcp_id_);
-    at_uart_->SendCommand(command);
+    static_cast<void>(at_uart_->SendCommand(command));
     auto bits = xEventGroupWaitBits(event_group_handle_, ML307_TCP_INITIALIZED, pdTRUE, pdFALSE, pdMS_TO_TICKS(TCP_CONNECT_TIMEOUT_MS));
     if (!(bits & ML307_TCP_INITIALIZED)) {
         ESP_LOGE(TAG, "Failed to initialize TCP connection");

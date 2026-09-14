@@ -712,7 +712,7 @@ std::string HttpClient::GetResponseHeader(const std::string& key) const {
 
 size_t HttpClient::GetBodyLength() {
     if (!headers_received_) {
-        GetStatusCode();  // 这会等待头部接收
+        static_cast<void>(GetStatusCode());  // 这会等待头部接收
     }
 
     if (response_chunked_) {

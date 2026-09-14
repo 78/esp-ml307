@@ -64,12 +64,12 @@ void AtModem::Reboot() {
 
 void AtModem::SetFlightMode(bool enable) {
     if (enable) {
-        at_uart_->SendCommand("AT+CFUN=4"); // flight mode
+        static_cast<void>(at_uart_->SendCommand("AT+CFUN=4")); // flight mode
         at_uart_->SetDtrPin(enable);
         network_ready_ = false;
     } else {
         at_uart_->SetDtrPin(enable);
-        at_uart_->SendCommand("AT+CFUN=1"); // normal mode
+        static_cast<void>(at_uart_->SendCommand("AT+CFUN=1")); // normal mode
     }
 }
 

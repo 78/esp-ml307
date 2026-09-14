@@ -76,19 +76,19 @@ NetworkResult<> Ec801ESsl::Connect(const std::string& host, int port) {
     xEventGroupClearBits(event_group_handle_, EC801E_SSL_CONNECTED | EC801E_SSL_DISCONNECTED | EC801E_SSL_ERROR);
 
     // Keep data in one line; Use HEX encoding in response
-    at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1");
+    static_cast<void>(at_uart_->SendCommand("AT+QICFG=\"close/mode\",1;+QICFG=\"viewmode\",1;+QICFG=\"sendinfo\",1;+QICFG=\"dataformat\",0,1"));
 
     // Config SSL Context
-    at_uart_->SendCommand("AT+QSSLCFG=\"sslversion\",1,4;+QSSLCFG=\"ciphersuite\",1,0xFFFF;+QSSLCFG=\"seclevel\",1,0");
+    static_cast<void>(at_uart_->SendCommand("AT+QSSLCFG=\"sslversion\",1,4;+QSSLCFG=\"ciphersuite\",1,0xFFFF;+QSSLCFG=\"seclevel\",1,0"));
     // at_uart_->SendCommand("AT+QSSLCFG=\"cacert\",1,\"UFS:cacert.pem\"");
 
     // 检查这个 id 是否已经连接
     std::string command = "AT+QSSLSTATE=1," + std::to_string(ssl_id_);
-    at_uart_->SendCommand(command);
+    static_cast<void>(at_uart_->SendCommand(command));
 
     // 断开之前的连接（不触发回调事件）
     if (instance_active_) {
-        at_uart_->SendCommand("AT+QSSLCLOSE=" + std::to_string(ssl_id_));
+        static_cast<void>(at_uart_->SendCommand("AT+QSSLCLOSE=" + std::to_string(ssl_id_)));
         xEventGroupWaitBits(event_group_handle_, EC801E_SSL_DISCONNECTED, pdTRUE, pdFALSE, SSL_CONNECT_TIMEOUT_MS / portTICK_PERIOD_MS);
         instance_active_ = false;
     }
@@ -119,7 +119,7 @@ void Ec801ESsl::Disconnect() {
         return;
     }
     
-    at_uart_->SendCommand("AT+QSSLCLOSE=" + std::to_string(ssl_id_));
+    static_cast<void>(at_uart_->SendCommand("AT+QSSLCLOSE=" + std::to_string(ssl_id_)));
 
     if (connected_) {
         connected_ = false;
