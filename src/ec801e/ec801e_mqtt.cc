@@ -86,7 +86,7 @@ NetworkResult<> Ec801EMqtt::Connect(const std::string broker_address, int broker
 
     if (broker_port == 8883) {
         // Config SSL Context
-        at_uart_->SendCommand("AT+QSSLCFG=\"sslversion\",2,4;+QSSLCFG=\"ciphersuite\",2,0xFFFF;+QSSLCFG=\"seclevel\",2,0");
+        static_cast<void>(at_uart_->SendCommand("AT+QSSLCFG=\"sslversion\",2,4;+QSSLCFG=\"ciphersuite\",2,0xFFFF;+QSSLCFG=\"seclevel\",2,0"));
         if (auto result = at_uart_->SendCommand(std::string("AT+QMTCFG=\"ssl\",") + std::to_string(mqtt_id_) + ",1,2"); !result) {
             ESP_LOGE(TAG, "Failed to set MQTT to use SSL: %s", result.error().ToString().c_str());
             return Fail(result.error().ToNetworkError());
@@ -138,7 +138,7 @@ NetworkResult<> Ec801EMqtt::Connect(const std::string broker_address, int broker
         ESP_LOGE(TAG, "Failed to open MQTT connection: %s", message);
 
         if (error_code_ == 2) { // MQTT 标识符被占用
-            at_uart_->SendCommand(std::string("AT+QMTDISC=") + std::to_string(mqtt_id_));
+            static_cast<void>(at_uart_->SendCommand(std::string("AT+QMTDISC=") + std::to_string(mqtt_id_)));
             bits = xEventGroupWaitBits(event_group_handle_, EC801E_MQTT_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(EC801E_MQTT_CONNECT_TIMEOUT_MS));
             if (!(bits & EC801E_MQTT_DISCONNECTED_EVENT)) {
                 ESP_LOGE(TAG, "Failed to disconnect from previous connection");
@@ -188,7 +188,7 @@ void Ec801EMqtt::Disconnect() {
     if (!connected_) {
         return;
     }
-    at_uart_->SendCommand(std::string("AT+QMTDISC=") + std::to_string(mqtt_id_));
+    static_cast<void>(at_uart_->SendCommand(std::string("AT+QMTDISC=") + std::to_string(mqtt_id_)));
 }
 
 bool Ec801EMqtt::Publish(const std::string topic, const std::string payload, int qos) {

@@ -22,10 +22,10 @@ Ml307AtModem::Ml307AtModem(std::shared_ptr<AtUart> at_uart) : AtModem(at_uart) {
 }
 
 void Ml307AtModem::ResetConnections() {
-    at_uart_->SendCommand("AT+MHTTPDEL=0");
-    at_uart_->SendCommand("AT+MHTTPDEL=1");
-    at_uart_->SendCommand("AT+MHTTPDEL=2");
-    at_uart_->SendCommand("AT+MHTTPDEL=3");
+    static_cast<void>(at_uart_->SendCommand("AT+MHTTPDEL=0"));
+    static_cast<void>(at_uart_->SendCommand("AT+MHTTPDEL=1"));
+    static_cast<void>(at_uart_->SendCommand("AT+MHTTPDEL=2"));
+    static_cast<void>(at_uart_->SendCommand("AT+MHTTPDEL=3"));
 }
 
 std::string Ml307AtModem::GetIccid() {
@@ -60,13 +60,13 @@ void Ml307AtModem::HandleUrc(const std::string& command, const std::vector<AtArg
 }
 
 void Ml307AtModem::Reboot() {
-    at_uart_->SendCommand("AT+MREBOOT=0");
+    static_cast<void>(at_uart_->SendCommand("AT+MREBOOT=0"));
 }
 
 bool Ml307AtModem::SetSleepMode(bool enable, int delay_seconds) {
     if (enable) {
         if (delay_seconds > 0) {
-            at_uart_->SendCommand("AT+MLPMCFG=\"delaysleep\"," + std::to_string(delay_seconds));
+            static_cast<void>(at_uart_->SendCommand("AT+MLPMCFG=\"delaysleep\"," + std::to_string(delay_seconds)));
         }
         return at_uart_->SendCommand("AT+MLPMCFG=\"sleepmode\",2,0").has_value();
     } else {
@@ -80,7 +80,7 @@ NetworkStatus Ml307AtModem::WaitForNetworkReady(int timeout_ms) {
         // Wait for IP address, maximum total wait time is 4270ms
         int delay_ms = 10;
         for (int i = 0; i < 10; i++) {
-            at_uart_->SendCommand("AT+MIPCALL?");
+            static_cast<void>(at_uart_->SendCommand("AT+MIPCALL?"));
             auto bits = xEventGroupWaitBits(event_group_handle_, AT_EVENT_NETWORK_READY, pdFALSE, pdTRUE, pdMS_TO_TICKS(delay_ms));
             if (bits & AT_EVENT_NETWORK_READY) {
                 return NetworkStatus::Ready;

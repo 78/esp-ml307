@@ -131,7 +131,7 @@ NetworkResult<> Ml307Mqtt::Connect(const std::string broker_address, int broker_
 
 bool Ml307Mqtt::IsConnected() {
     // 检查这个 id 是否已经连接
-    at_uart_->SendCommand(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_));
+    static_cast<void>(at_uart_->SendCommand(std::string("AT+MQTTSTATE=") + std::to_string(mqtt_id_)));
     auto bits = xEventGroupWaitBits(event_group_handle_, MQTT_INITIALIZED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(MQTT_CONNECT_TIMEOUT_MS));
     if (!(bits & MQTT_INITIALIZED_EVENT)) {
         ESP_LOGE(TAG, "Failed to initialize MQTT connection");
@@ -144,7 +144,7 @@ void Ml307Mqtt::Disconnect() {
     if (!connected_) {
         return;
     }
-    at_uart_->SendCommand(std::string("AT+MQTTDISC=") + std::to_string(mqtt_id_));
+    static_cast<void>(at_uart_->SendCommand(std::string("AT+MQTTDISC=") + std::to_string(mqtt_id_)));
 }
 
 bool Ml307Mqtt::Publish(const std::string topic, const std::string payload, int qos) {

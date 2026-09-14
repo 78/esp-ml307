@@ -219,19 +219,34 @@ NetworkResult<> Ml307Http::Open(const std::string& method, const std::string& ur
     request_chunked_ = method_supports_content && !content_.has_value();
     ESP_LOGI(TAG, "HTTP connection created, ID: %d, protocol: %s, host: %s", http_id_, protocol_.c_str(), host_.c_str());
 
+    auto send_config_command = [this](const std::string& command) -> NetworkResult<> {
+        if (auto result = at_uart_->SendCommand(command); !result) {
+            ESP_LOGE(TAG, "Failed to configure HTTP request: %s", result.error().ToString().c_str());
+            Close();
+            return Fail(result.error().ToNetworkError());
+        }
+        return {};
+    };
+
     if (protocol_ == "https") {
         command = "AT+MHTTPCFG=\"ssl\"," + std::to_string(http_id_) + ",1,0";
-        at_uart_->SendCommand(command);
+        if (auto result = send_config_command(command); !result) {
+            return result;
+        }
     }
 
     if (request_chunked_) {
         command = "AT+MHTTPCFG=\"chunked\"," + std::to_string(http_id_) + ",1";
-        at_uart_->SendCommand(command);
+        if (auto result = send_config_command(command); !result) {
+            return result;
+        }
     }
 
     // Set HEX encoding OFF
     command = "AT+MHTTPCFG=\"encoding\"," + std::to_string(http_id_) + ",0,0";
-    at_uart_->SendCommand(command);
+    if (auto result = send_config_command(command); !result) {
+        return result;
+    }
 
     // Set timeout (seconds): connect timeout, response timeout, input timeout
     // sprintf(command, "AT+MHTTPCFG=\"timeout\",%d,%d,%d,%d", http_id_, timeout_ms_ / 1000, timeout_ms_ / 1000, timeout_ms_ / 1000);
@@ -242,19 +257,27 @@ NetworkResult<> Ml307Http::Open(const std::string& method, const std::string& ur
         auto line = it->first + ": " + it->second;
         bool is_last = std::next(it) == headers_.end();
         command = "AT+MHTTPHEADER=" + std::to_string(http_id_) + "," + std::to_string(is_last ? 0 : 1) + "," + std::to_string(line.size()) + ",\"" + line + "\"";
-        at_uart_->SendCommand(command);
+        if (auto result = send_config_command(command); !result) {
+            return result;
+        }
     }
 
     if (method_supports_content && content_.has_value()) {
         command = "AT+MHTTPCONTENT=" + std::to_string(http_id_) + ",0," + std::to_string(content_.value().size());
         auto& content = content_.value();
-        at_uart_->SendCommandWithData(command, 1000, true, content.data(), content.size());
+        if (auto result = at_uart_->SendCommandWithData(command, 1000, true, content.data(), content.size()); !result) {
+            ESP_LOGE(TAG, "Failed to send HTTP content: %s", result.error().ToString().c_str());
+            Close();
+            return Fail(result.error().ToNetworkError());
+        }
         content_ = std::nullopt;
     }
 
     // Set HEX encoding ON
     command = "AT+MHTTPCFG=\"encoding\"," + std::to_string(http_id_) + ",1,1";
-    at_uart_->SendCommand(command);
+    if (auto result = send_config_command(command); !result) {
+        return result;
+    }
 
     // Send request
     // method to value: 1. GET 2. POST 3. PUT 4. DELETE 5. HEAD
@@ -346,7 +369,9 @@ void Ml307Http::Close() {
         return;
     }
     std::string command = "AT+MHTTPDEL=" + std::to_string(http_id_);
-    at_uart_->SendCommand(command);
+    if (auto result = at_uart_->SendCommand(command); !result) {
+        ESP_LOGW(TAG, "Failed to close HTTP connection: %s", result.error().ToString().c_str());
+    }
 
     instance_active_ = false;
     eof_ = true;
