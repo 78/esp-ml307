@@ -1,4 +1,4 @@
-# ML307 / Quectel-E Series Cat.1 AT Modem (v3.8)
+# ML307 / Quectel-E Series Cat.1 AT Modem (v3.7)
 
 [English](README.md) | 简体中文
 
@@ -451,7 +451,7 @@ return at_uart_->SendCommand("AT+QSCLK=1").has_value();
 
 ```yaml
 dependencies:
-  78/esp-ml307: "~3.8.0"
+  78/esp-ml307: "~3.7.0"
 ```
 
 ## 迁移指南 (v2.x → v3.0)
