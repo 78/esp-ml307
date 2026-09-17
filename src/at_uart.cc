@@ -32,6 +32,8 @@ AtUart::AtUart(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin, gpio_nu
 }
 
 AtUart::~AtUart() {
+    // Stop the producer before deleting its consumers or draining their leases.
+    uart_uhci_.StopReceive();
     if (receive_task_handle_) {
         vTaskDelete(receive_task_handle_);
     }
@@ -51,6 +53,7 @@ AtUart::~AtUart() {
         }
         vQueueDelete(rx_data_queue_);
     }
+    uart_uhci_.ReclaimDeferredBuffers();
     if (initialized_) {
         // Remove RI pin ISR handler if configured
         if (ri_pin_ != GPIO_NUM_NC) {
@@ -189,14 +192,17 @@ bool IRAM_ATTR AtUart::DmaRxCallback(const UartUhci::RxEventData& data, void* us
         item.size = data.recv_size;
         
         if (xQueueSendFromISR(self->rx_data_queue_, &item, &xHigherPriorityTaskWoken) != pdTRUE) {
-            // Queue full, return buffer immediately
-            ESP_DRAM_LOGW("AtUart", "RX queue full, dropping %u bytes", data.recv_size);
-            self->uart_uhci_.ReturnBuffer(data.buffer);
+            // DMA recovery must run in task context, even when the queue is full.
+            self->uart_uhci_.DeferReturnBuffer(data.buffer);
         }
     } else if (data.buffer) {
-        // Empty buffer, return immediately
-        ESP_DRAM_LOGW("AtUart", "Empty buffer received, size=%u", data.recv_size);
-        self->uart_uhci_.ReturnBuffer(data.buffer);
+        self->uart_uhci_.DeferReturnBuffer(data.buffer);
+    }
+
+    // Wake for both queued data and deferred returns without another queue item.
+    // Data received before task creation is drained on the task's first iteration.
+    if (data.buffer && self->receive_task_handle_) {
+        vTaskNotifyGiveFromISR(self->receive_task_handle_, &xHigherPriorityTaskWoken);
     }
     
     return xHigherPriorityTaskWoken == pdTRUE;
@@ -218,20 +224,26 @@ void AtUart::ReceiveTask() {
     // It runs at high priority to ensure timely buffer return to UHCI pool
     RxDataItem item;
     while (true) {
-        // Block waiting for data from DMA queue
-        if (xQueueReceive(rx_data_queue_, &item, portMAX_DELAY) == pdTRUE) {
+        // Drain before waiting so data received during Initialize is not stranded.
+        while (xQueueReceive(rx_data_queue_, &item, 0) == pdTRUE) {
             if (item.buffer && item.size > 0) {
                 // Append to rx_buffer_ with lock protection
                 {
                     std::lock_guard<std::mutex> lock(rx_buffer_mutex_);
                     rx_buffer_.append(reinterpret_cast<char*>(item.buffer->data), item.size);
                 }
-                // Return buffer to UHCI pool immediately
+            }
+            if (item.buffer) {
                 uart_uhci_.ReturnBuffer(item.buffer);
-                // Notify EventTask to parse response
+            }
+            if (item.buffer && item.size > 0) {
+                // Return the DMA lease before waking the parser.
                 xEventGroupSetBits(event_group_handle_, AT_EVENT_PARSE_NEEDED);
             }
         }
+        uart_uhci_.ReclaimDeferredBuffers();
+        // A notification arriving between reclamation and this wait stays pending.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 }
 
@@ -457,7 +469,20 @@ AtResult AtUart::SendData(const char* data, size_t length) {
         return Fail({AtErrc::NotInitialized});
     }
 
-    esp_err_t ret = uart_uhci_.Transmit(reinterpret_cast<const uint8_t*>(data), length);
+    if (length == 0) {
+        return {};
+    }
+
+    // UART is configured as 8N1: ten wire bits per byte. Use the actual rate
+    // because baud detection changes hardware before updating baud_rate_.
+    uint32_t baud_rate = 0;
+    esp_err_t ret = uart_get_baudrate(uart_num_, &baud_rate);
+    if (ret != ESP_OK || baud_rate == 0) {
+        return Fail({AtErrc::TransmitFailed, 0, ret != ESP_OK ? ret : ESP_ERR_INVALID_STATE});
+    }
+    const uint64_t wire_ms = (static_cast<uint64_t>(length) * 10000 + baud_rate - 1) / baud_rate;
+    const uint32_t timeout_ms = static_cast<uint32_t>(std::min<uint64_t>(wire_ms + 1000, UINT32_MAX));
+    ret = uart_uhci_.Transmit(reinterpret_cast<const uint8_t*>(data), length, timeout_ms);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UHCI transmit failed: %s", esp_err_to_name(ret));
         return Fail({AtErrc::TransmitFailed, 0, ret});

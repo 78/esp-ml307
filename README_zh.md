@@ -9,6 +9,8 @@
 
 组件要求 **C++23**（`std::expected`）和 **ESP-IDF >= 5.5.2**。
 
+3.7.5 在非 ESP32 目标上要求 **uart-uhci ^0.4.0**，可以与 uart-eth-modem 0.7.x 共用此依赖。公开 AT API 不变。UART 发送超时按 8N1 传输时间加 1000 ms 单独计算；命令超时参数仍控制等待模组响应的时间。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 🆕 版本 3.7 新特性
 
 - **结构化错误**: 同步接口返回 `NetworkResult<>` / `AtResult`（`std::expected`），不再用 `bool` + `GetLastError()`

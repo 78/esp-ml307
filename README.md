@@ -9,6 +9,8 @@ If you see `UART_FIFO_OVF`, set `CONFIG_UART_ISR_IN_IRAM=y` and keep heavy I/O s
 
 Requires **C++23** (`std::expected`) and **ESP-IDF >= 5.5.2**.
 
+Version 3.7.5 requires **uart-uhci ^0.4.0** on non-ESP32 targets and can share it with uart-eth-modem 0.7.x. Public AT APIs are unchanged. UART transmission has a separate timeout based on 8N1 wire time plus 1000 ms; the command timeout still controls waiting for the modem response. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## What's New in 3.7
 
 - **Structured errors**: sync APIs return `NetworkResult<>` / `AtResult` (`std::expected`). `bool` + `GetLastError()` is gone.
