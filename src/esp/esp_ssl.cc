@@ -3,6 +3,7 @@
 #include <esp_crt_bundle.h>
 #include <cstring>
 #include <unistd.h>
+#include <sys/socket.h>
 
 static const char *TAG = "EspSsl";
 
@@ -71,7 +72,13 @@ void EspSsl::Disconnect() {
         int sockfd;
         ESP_ERROR_CHECK(esp_tls_get_conn_sockfd(tls_client_, &sockfd));
         if (sockfd >= 0) {
-            close(sockfd);
+            // Use shutdown(), not close(). close() hands the fd number back to lwIP
+            // immediately, and esp_tls_conn_destroy() below closes the same number
+            // again (mbedtls_net_free() on its copy in server_fd). If another task
+            // opened a socket in between, it got that number and is closed by
+            // mistake. shutdown() still wakes ReceiveTask, but keeps the fd so
+            // esp_tls_conn_destroy() closes it exactly once.
+            shutdown(sockfd, SHUT_RDWR);
         }
     
         auto bits = xEventGroupWaitBits(event_group_, ESP_SSL_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
