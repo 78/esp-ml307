@@ -17,6 +17,16 @@ EspTcp::EspTcp() {
 EspTcp::~EspTcp() {
     Disconnect();
 
+    // Fix: the receive task may still be running its disconnect path
+    // (OnTcpDisconnected -> notify_all) after a passive disconnect, because
+    // the fd was already closed by the receive task itself. Wait for it to
+    // exit before destroying the event group, otherwise the task touches
+    // freed memory (use-after-free) on objects destroyed right after a
+    // passive disconnect.
+    if (receive_task_started_ && event_group_ != nullptr) {
+        xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+    }
+
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
@@ -57,21 +67,34 @@ NetworkResult<> EspTcp::Connect(const std::string& host, int port) {
         return Fail(err);
     }
 
-    connected_ = true;
-
     xEventGroupClearBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
-    xTaskCreate([](void* arg) {
+    BaseType_t rc = xTaskCreate([](void* arg) {
         EspTcp* tcp = (EspTcp*)arg;
         tcp->ReceiveTask();
         xEventGroupSetBits(tcp->event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
         vTaskDelete(NULL);
     }, "tcp_receive", 4096, this, 1, &receive_task_handle_);
+    if (rc != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create receive task");
+        close(tcp_fd_);
+        tcp_fd_ = -1;
+        return Fail(NetworkError::FromErrno(ENOMEM));
+    }
+    connected_ = true;
+    receive_task_started_ = true;
     return {};
 }
 
 void EspTcp::Disconnect() {
     // 如果已经断开，直接返回
     if (!connected_) {
+        // Fix: after a passive disconnect the fd is already closed (closed by
+        // the receive task itself), but the receive task may still be running
+        // its disconnect path. Wait for it to exit before returning, so that
+        // destroying the object right after Disconnect() is safe.
+        if (receive_task_started_ && event_group_ != nullptr) {
+            xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+        }
         return;
     }
 
@@ -85,14 +108,18 @@ void EspTcp::DoDisconnect(bool wait_for_task) {
     if (tcp_fd_ != -1) {
         close(tcp_fd_);
         tcp_fd_ = -1;
+    }
 
-        // 只有主动断开时才需要等待接收任务退出
-        // 被动断开时，当前就是接收任务，不需要等待
-        if (wait_for_task) {
-            auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-            if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
-                ESP_LOGE(TAG, "Failed to wait for receive task exit");
-            }
+    // Fix: the wait must NOT depend on the fd state. On a passive disconnect
+    // the receive task already closed the fd, so the old code skipped the
+    // wait entirely and the object could be destroyed while the receive task
+    // was still running callbacks (use-after-free race). When
+    // wait_for_task == false the caller IS the receive task, so no wait is
+    // needed in that case.
+    if (wait_for_task && receive_task_started_) {
+        auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+        if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
+            ESP_LOGE(TAG, "Failed to wait for receive task exit");
         }
     }
 

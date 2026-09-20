@@ -22,6 +22,9 @@ private:
     int tcp_fd_ = -1;
     EventGroupHandle_t event_group_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
+    // Whether the receive task has been created (used to safely wait for it
+    // to exit during teardown, even after a passive disconnect closed the fd)
+    bool receive_task_started_ = false;
 
     void ReceiveTask();
     // 内部断开处理函数
