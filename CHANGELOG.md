@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.7.6 — 2026-10-15
+
+- Require uart-uhci `^0.4.1` on supported targets to include compatibility with the replacement GDMA alignment API in ESP-IDF maintenance branches.
+- Include the EspTcp teardown fix for a use-after-free race after passive disconnect.
+
 ## 3.7.5
 
 - Require uart-uhci `^0.4.0` on supported targets, allowing use alongside uart-eth-modem 0.7.x.
