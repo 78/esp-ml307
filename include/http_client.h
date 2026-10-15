@@ -6,6 +6,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
+#include <atomic>
 #include <map>
 #include <string>
 #include <functional>
@@ -37,7 +38,7 @@ public:
     NetworkResult<int> Write(const char* buffer, size_t buffer_size) override;
     
     // Keep-Alive support
-    void SetKeepAlive(bool enable);
+    void SetKeepAlive(bool enable) override;
     bool IsConnectionReusable(const std::string& host, int port) const;
 
     NetworkResult<int> GetStatusCode() override;
@@ -46,12 +47,11 @@ public:
     std::string ReadAll() override;
 
 private:
-    // 数据块结构，用于队列缓冲
+    // Queued slice of response body with its own read offset.
     struct DataChunk {
         std::string data;
-        size_t offset = 0;  // 当前读取偏移
+        size_t offset = 0;
         
-        // 使用移动构造函数避免拷贝
         DataChunk(std::string&& d) : data(std::move(d)), offset(0) {}
         DataChunk(const std::string& d) : data(d), offset(0) {}
         
@@ -73,10 +73,11 @@ private:
         }
     };
 
-    // 头部条目结构体，用于高效存储和查找
+    // Header maps are keyed by the lowercase name; the original spelling is
+    // kept for writing request headers.
     struct HeaderEntry {
-        std::string original_key;  // 保留原始大小写的key（用于输出HTTP头部）
-        std::string value;         // 头部值
+        std::string original_key;
+        std::string value;
         
         HeaderEntry() = default;
         HeaderEntry(const std::string& key, const std::string& val) 
@@ -87,10 +88,11 @@ private:
     int connect_id_;
     std::unique_ptr<Tcp> tcp_;
     EventGroupHandle_t event_group_handle_;
-    std::mutex mutex_;
+    // Guards parser state. Lock order: mutex_ before read_mutex_.
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     
-    // 用于读取操作的专门锁和缓冲区队列
+    // Guards body_chunks_; cv_ and write_cv_ wait on it.
     std::mutex read_mutex_;
     std::deque<DataChunk> body_chunks_;
     std::condition_variable write_cv_;
@@ -99,30 +101,34 @@ private:
     int status_code_ = -1;
     int timeout_ms_ = 30000;
     std::string rx_buffer_;
-    std::map<std::string, HeaderEntry> headers_;  // key为小写，用于快速查找
+    std::map<std::string, HeaderEntry> headers_;
     std::string url_;
     std::string method_;
     std::string protocol_;
     std::string host_;
     std::string path_;
     int port_ = 80;
+    // Endpoint of the open transport; host_/port_ already describe the next request.
+    std::string connected_protocol_;
+    std::string connected_host_;
+    int connected_port_ = 0;
     std::optional<std::string> content_ = std::nullopt;
-    std::map<std::string, HeaderEntry> response_headers_;  // key为小写，用于快速查找
+    std::map<std::string, HeaderEntry> response_headers_;
     
-    // 移除原来的 body_ 变量，现在使用 body_chunks_ 队列
-    size_t body_offset_ = 0;
     size_t content_length_ = 0;
-    size_t total_body_received_ = 0;  // 总共接收的响应体字节数
-    bool eof_ = false;
-    bool connected_ = false;
-    bool headers_received_ = false;
+    size_t total_body_received_ = 0;
+    // Shared between the receive task and readers.
+    std::atomic<bool> eof_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> headers_received_{false};
+    std::atomic<bool> connection_error_{false};
+    std::atomic<bool> server_keep_alive_{false};
+    // Reason reported once connection_error_ is set; written before the flag.
+    NetworkError response_error_{};
     bool request_chunked_ = false;
     bool response_chunked_ = false;
-    bool connection_error_ = false;  // 新增：标记连接是否异常断开
-    bool keep_alive_ = false;  // 新增：是否启用 Keep-Alive（默认不启用）
-    bool server_keep_alive_ = false;  // 新增：服务器是否支持 Keep-Alive
+    bool keep_alive_ = false;
     
-    // HTTP 协议解析状态
     enum class ParseState {
         STATUS_LINE,
         HEADERS,
@@ -136,29 +142,27 @@ private:
     size_t chunk_size_ = 0;
     size_t chunk_received_ = 0;
 
-    // 私有方法
     bool ParseUrl(const std::string& url);
     std::string BuildHttpRequest();
     void OnTcpData(const std::string& data);
     void OnTcpDisconnected();
     void ProcessReceivedData();
+    bool TakeLine(std::string* line);
     bool ParseStatusLine(const std::string& line);
     bool ParseHeaderLine(const std::string& line);
-    void ParseChunkedBody(const std::string& data);
-    void ParseRegularBody(const std::string& data);
-    size_t ParseChunkSize(const std::string& chunk_size_line);
-    std::string GetNextLine(std::string& buffer);
-    bool HasCompleteLine(const std::string& buffer);
+    bool FinishHeaders();
+    void ParseRegularBody();
+    bool ParseChunkSize(const std::string& chunk_size_line, size_t* chunk_size);
+    void CompleteResponse();
     void SetError();
+    void WakeReaders();
     
-    // 新增：向读取队列添加数据的方法
     void AddBodyData(const std::string& data);
-    void AddBodyData(std::string&& data);  // 移动版本
+    void AddBodyData(std::string&& data);
     
-    // 新增：检查数据是否完整接收
     bool IsDataComplete() const;
     
-    // 新增：重置请求状态（用于连接复用）
+    // Clears per-response state while keeping the connection for reuse.
     void ResetRequestState();
 };
 

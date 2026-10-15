@@ -3,21 +3,32 @@
 #include <esp_log.h>
 #include <cstring>
 #include <cstdlib>
-#include <sstream>
+#include <cstdio>
 #include <chrono>
 #include <algorithm>
 #include <cctype>
 
 static const char *TAG = "HttpClient";
 
+// Status, header, chunk-size and trailer lines longer than this are rejected so
+// a peer that never sends a newline cannot grow rx_buffer_ without bound.
+static constexpr size_t kMaxLineLength = 8192;
+
+static std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
 HttpClient::HttpClient(NetworkInterface* network, int connect_id) : network_(network), connect_id_(connect_id) {
     event_group_handle_ = xEventGroupCreate();
 }
 
 HttpClient::~HttpClient() {
-    if (connected_) {
-        Close();
-    }
+    Close();
+    // Destroying the transport joins its receive task, whose callbacks use the
+    // event group and the members declared after tcp_ (destroyed before it).
+    tcp_.reset();
     vEventGroupDelete(event_group_handle_);
 }
 
@@ -26,10 +37,7 @@ void HttpClient::SetTimeout(int timeout_ms) {
 }
 
 void HttpClient::SetHeader(const std::string& key, const std::string& value) {
-    // 转换key为小写用于存储和查找，但保留原始key用于输出
-    std::string lower_key = key;
-    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
-    headers_[lower_key] = HeaderEntry(key, value);
+    headers_[ToLower(key)] = HeaderEntry(key, value);
 }
 
 void HttpClient::SetContent(std::string&& content) {
@@ -41,36 +49,33 @@ void HttpClient::SetKeepAlive(bool enable) {
 }
 
 bool HttpClient::IsConnectionReusable(const std::string& host, int port) const {
-    // 检查是否可以复用连接：
-    // 1. 已连接
-    // 2. host 和 port 相同
-    // 3. 没有连接错误
-    // 4. 上一次响应支持 Keep-Alive
-    // 5. 上一次请求已完成（数据已接收完整）
-    return connected_ && 
-           host_ == host && 
-           port_ == port && 
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Reuse only an open keep-alive connection to the same endpoint whose
+    // previous response was fully parsed. Close-delimited bodies never reach
+    // COMPLETE while connected, so they are never reused.
+    return connected_ &&
+           connected_host_ == host &&
+           connected_port_ == port &&
            !connection_error_ &&
+           keep_alive_ &&
            server_keep_alive_ &&
-           IsDataComplete();
+           parse_state_ == ParseState::COMPLETE;
 }
 
 bool HttpClient::ParseUrl(const std::string& url) {
-    // 解析 URL: protocol://host:port/path
+    // protocol://host[:port][/path]
     size_t protocol_end = url.find("://");
     if (protocol_end == std::string::npos) {
         ESP_LOGE(TAG, "Invalid URL format: %s", url.c_str());
         return false;
     }
 
-    protocol_ = url.substr(0, protocol_end);
-    std::transform(protocol_.begin(), protocol_.end(), protocol_.begin(), ::tolower);
+    protocol_ = ToLower(url.substr(0, protocol_end));
 
     size_t host_start = protocol_end + 3;
     size_t path_start = url.find("/", host_start);
     size_t port_start = url.find(":", host_start);
 
-    // 默认端口
     if (protocol_ == "https") {
         port_ = 443;
     } else {
@@ -117,56 +122,51 @@ bool HttpClient::ParseUrl(const std::string& url) {
 }
 
 std::string HttpClient::BuildHttpRequest() {
-    std::ostringstream request;
+    // Plain string appends: std::ostringstream would link ~170 KB of iostream/locale code.
+    std::string request;
 
-    // 请求行
-    request << method_ << " " << path_ << " HTTP/1.1\r\n";
+    request += method_ + " " + path_ + " HTTP/1.1\r\n";
 
-    // Host 头
-    request << "Host: " << host_;
+    request += "Host: " + host_;
     if ((protocol_ == "http" && port_ != 80) || (protocol_ == "https" && port_ != 443)) {
-        request << ":" << port_;
+        request += ":" + std::to_string(port_);
     }
-    request << "\r\n";
+    request += "\r\n";
 
-    // 用户自定义头部（使用原始key输出）
     for (const auto& [lower_key, header_entry] : headers_) {
-        request << header_entry.original_key << ": " << header_entry.value << "\r\n";
+        request += header_entry.original_key + ": " + header_entry.value + "\r\n";
     }
 
-    // 内容相关头部（仅在用户未设置时添加）
+    // Framing headers are added only when the caller did not set them.
     bool user_set_content_length = headers_.find("content-length") != headers_.end();
     bool user_set_transfer_encoding = headers_.find("transfer-encoding") != headers_.end();
     bool has_content = content_.has_value() && !content_->empty();
     if (has_content && !user_set_content_length) {
-        request << "Content-Length: " << content_->size() << "\r\n";
+        request += "Content-Length: " + std::to_string(content_->size()) + "\r\n";
     } else if ((method_ == "POST" || method_ == "PUT") && !user_set_content_length && !user_set_transfer_encoding) {
         if (request_chunked_) {
-            request << "Transfer-Encoding: chunked\r\n";
+            request += "Transfer-Encoding: chunked\r\n";
         } else {
-            request << "Content-Length: 0\r\n";
+            request += "Content-Length: 0\r\n";
         }
     }
 
-    // 连接控制（仅在用户未设置时添加）
     if (headers_.find("connection") == headers_.end()) {
         if (keep_alive_) {
-            request << "Connection: keep-alive\r\n";
+            request += "Connection: keep-alive\r\n";
         } else {
-            request << "Connection: close\r\n";
+            request += "Connection: close\r\n";
         }
     }
 
-    // 结束头部
-    request << "\r\n";
-    ESP_LOGD(TAG, "HTTP request headers:\n%s", request.str().c_str());
+    request += "\r\n";
+    ESP_LOGD(TAG, "HTTP request headers:\n%s", request.c_str());
 
-    // 请求体
     if (has_content) {
-        request << *content_;
+        request += *content_;
     }
 
-    return request.str();
+    return request;
 }
 
 NetworkResult<> HttpClient::Open(const std::string& method, const std::string& url) {
@@ -177,55 +177,54 @@ NetworkResult<> HttpClient::Open(const std::string& method, const std::string& u
         return Fail(NetworkError::InvalidArgument());
     }
 
-    // 检查是否可以复用现有连接
-    bool can_reuse = IsConnectionReusable(host_, port_);
+    const bool can_reuse = protocol_ == connected_protocol_ && IsConnectionReusable(host_, port_);
     
     uint32_t t_connect = xTaskGetTickCount() * portTICK_PERIOD_MS;
     if (can_reuse) {
         ESP_LOGI(TAG, "Reusing existing connection to %s:%d", host_.c_str(), port_);
-        // 只重置请求状态，不关闭连接（不会清空 content_）
         ResetRequestState();
     } else {
-        // 如果之前有连接，先关闭
         if (connected_) {
             ESP_LOGI(TAG, "Closing previous connection (host or port changed, or connection not reusable)");
-            tcp_->Disconnect();
-            connected_ = false;
         }
-        
-        // 重置所有状态（不会清空 content_）
+        // Destroying the old transport joins its receive task, so a late
+        // disconnect callback cannot touch the state reset below.
+        connected_ = false;
+        tcp_.reset();
         ResetRequestState();
         
-        // 建立新的 TCP 连接
         if (protocol_ == "https") {
             tcp_ = network_->CreateSsl(connect_id_);
         } else {
             tcp_ = network_->CreateTcp(connect_id_);
         }
 
-        // 设置 TCP 数据接收回调
         tcp_->OnStream([this](const std::string& data) {
             OnTcpData(data);
         });
 
-        // 设置 TCP 断开连接回调
         tcp_->OnDisconnected([this]() {
             OnTcpDisconnected();
         });
         
+        // Set before Connect() starts the receive task so an immediate peer
+        // close is not overwritten afterwards.
+        connected_ = true;
         if (auto result = tcp_->Connect(host_, port_); !result) {
+            connected_ = false;
             ESP_LOGE(TAG, "TCP connection failed: %s", result.error().ToString().c_str());
             return Fail(result.error());
         }
         uint32_t t_connected = xTaskGetTickCount() * portTICK_PERIOD_MS;
         
-        connected_ = true;
+        connected_protocol_ = protocol_;
+        connected_host_ = host_;
+        connected_port_ = port_;
         ESP_LOGI(TAG, "Established new connection to %s:%d protocol=%s cost=%u", host_.c_str(), port_, protocol_.c_str(), t_connected - t_connect);
     }
     
     request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
 
-    // 构建并发送 HTTP 请求
     std::string http_request = BuildHttpRequest();
     if (tcp_->Send(http_request) <= 0) {
         ESP_LOGE(TAG, "Send HTTP request failed");
@@ -234,7 +233,7 @@ NetworkResult<> HttpClient::Open(const std::string& method, const std::string& u
         return Fail(NetworkError::TransmitFailed());
     }
 
-    // 发送完成后清空 content_ 和 headers_，避免下次请求误用
+    // Request content and headers apply to one request only.
     content_ = std::nullopt;
     headers_.clear();
 
@@ -247,24 +246,23 @@ void HttpClient::Close() {
     }
 
     connected_ = false;
-    server_keep_alive_ = false;  // 重置 Keep-Alive 标志
-    write_cv_.notify_all();
+    server_keep_alive_ = false;
+    // Release a receive task blocked on body backpressure before joining it.
+    WakeReaders();
     tcp_->Disconnect();
 
     eof_ = true;
-    cv_.notify_all();
+    WakeReaders();
     ESP_LOGI(TAG, "HTTP connection closed");
 }
 
 void HttpClient::OnTcpData(const std::string& data) {
-    // 检查 body_chunks_ 大小，如果超过 8KB — 这里不持有 mutex_，
-    // 因为该等待只依赖 read_mutex_ 保护的 body_chunks_ 和 connected_，
-    // 而 connected_ 只能由 OnTcpDisconnected() 设置，它需要获取 mutex_。
-    // 如果在等待期间持有 mutex_，OnTcpDisconnected() 将永远无法获取锁，
-    // 造成死锁（在服务器提前关闭连接、接收任务与本函数并发执行时触发）。
+    // Apply backpressure while more than MAX_BODY_CHUNKS_SIZE of body is
+    // unread. mutex_ must not be held here: OnTcpDisconnected() needs it to
+    // clear connected_, which is what releases this wait when the peer closes.
     //
-    // 背压只看已入队的未读数据，不把本包 size 算进去：
-    // 否则单个 >=8KB 的包在队列已空时也会永远等不到谓词成立。
+    // Only already-queued bytes count, otherwise a single packet of 8 KB or
+    // more could never satisfy the predicate even with an empty queue.
     {
         std::unique_lock<std::mutex> read_lock(read_mutex_);
         write_cv_.wait(read_lock, [this] {
@@ -279,195 +277,148 @@ void HttpClient::OnTcpData(const std::string& data) {
     std::lock_guard<std::mutex> lock(mutex_);
     rx_buffer_.append(data);
     ProcessReceivedData();
-    cv_.notify_one();
 }
 
 void HttpClient::OnTcpDisconnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
-    server_keep_alive_ = false;  // 连接断开，重置 Keep-Alive 标志
+    server_keep_alive_ = false;
 
-    // 检查数据是否完整接收
-    if (headers_received_ && !IsDataComplete()) {
-        // 如果已接收头部但数据不完整，标记为连接错误
+    if (connection_error_) {
+        // Keep the parse error that was already reported.
+    } else if (!headers_received_) {
+        // GetStatusCode() waits on event bits rather than cv_, so it must be
+        // woken explicitly or it sleeps until timeout_ms_ for a response that
+        // can no longer arrive.
+        response_error_ = NetworkError::ServerDisconnected();
+        connection_error_ = true;
+        xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_ERROR);
+        ESP_LOGW(TAG, "Connection closed before response headers were received");
+    } else if (!IsDataComplete()) {
+        response_error_ = NetworkError::ServerDisconnected();
         connection_error_ = true;
         ESP_LOGE(TAG, "Connection closed prematurely, expected %u bytes but only received %u bytes",
                  content_length_, total_body_received_);
     } else {
-        // 数据完整或还未开始接收响应体，正常结束
         eof_ = true;
     }
 
-    cv_.notify_all();  // 通知所有等待的读取操作
-    // 唤醒 OnTcpData 中因 body_chunks_ 背压而阻塞的等待，
-    // 否则 connected_==false 时若无人 notify，接收回调会永久卡在 write_cv_ 上。
-    write_cv_.notify_all();
+    WakeReaders();
 }
 
 void HttpClient::ProcessReceivedData() {
-    while (!rx_buffer_.empty() && parse_state_ != ParseState::COMPLETE) {
+    std::string line;
+    while (!rx_buffer_.empty() && parse_state_ != ParseState::COMPLETE && !connection_error_) {
         switch (parse_state_) {
-            case ParseState::STATUS_LINE: {
-                if (!HasCompleteLine(rx_buffer_)) return;  // 需要更多数据
-
-                std::string line = GetNextLine(rx_buffer_);
-
-                if (ParseStatusLine(line)) {
-                    parse_state_ = ParseState::HEADERS;
-                } else {
+            case ParseState::STATUS_LINE:
+                if (!TakeLine(&line)) return;
+                if (!ParseStatusLine(line)) {
                     SetError();
                     return;
                 }
+                parse_state_ = ParseState::HEADERS;
                 break;
-            }
 
-            case ParseState::HEADERS: {
-                if (!HasCompleteLine(rx_buffer_)) return;  // 需要更多数据
-
-                std::string line = GetNextLine(rx_buffer_);
-
-                // 检查是否为空行（头部结束标记）
-                // GetNextLine 已经移除了 \r，所以空行就是 empty()
-                if (line.empty()) {
-                    // 检查服务器是否支持 Keep-Alive
-                    auto conn_it = response_headers_.find("connection");
-                    if (conn_it != response_headers_.end()) {
-                        std::string conn_value = conn_it->second.value;
-                        std::transform(conn_value.begin(), conn_value.end(), conn_value.begin(), ::tolower);
-                        if (conn_value.find("keep-alive") != std::string::npos) {
-                            server_keep_alive_ = true;
-                            ESP_LOGD(TAG, "Server supports Keep-Alive");
-                        } else if (conn_value.find("close") != std::string::npos) {
-                            server_keep_alive_ = false;
-                            ESP_LOGD(TAG, "Server will close connection");
-                        }
-                    }
-                    
-                    // 检查是否为 chunked 编码
-                    auto it = response_headers_.find("transfer-encoding");
-                    if (it != response_headers_.end() &&
-                        it->second.value.find("chunked") != std::string::npos) {
-                        response_chunked_ = true;
-                        parse_state_ = ParseState::CHUNK_SIZE;
-                    } else {
-                        parse_state_ = ParseState::BODY;
-                        auto cl_it = response_headers_.find("content-length");
-                        if (cl_it != response_headers_.end()) {
-                            char* endptr;
-                            unsigned long length = strtoul(cl_it->second.value.c_str(), &endptr, 10);
-                            if (endptr != cl_it->second.value.c_str() && *endptr == '\0') {
-                                content_length_ = static_cast<size_t>(length);
-                            } else {
-                                ESP_LOGE(TAG, "Invalid Content-Length: %s", cl_it->second.value.c_str());
-                                content_length_ = 0;
-                            }
-                        }
-                    }
-                    // 头部结束
-                    headers_received_ = true;
-                    xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_HEADERS_RECEIVED);
-                } else {
+            case ParseState::HEADERS:
+                if (!TakeLine(&line)) return;
+                if (!line.empty()) {
                     if (!ParseHeaderLine(line)) {
                         SetError();
                         return;
                     }
+                    break;
+                }
+                if (status_code_ >= 100 && status_code_ < 200 && status_code_ != 101) {
+                    // Interim response such as 103 Early Hints; the final one follows.
+                    response_headers_.clear();
+                    parse_state_ = ParseState::STATUS_LINE;
+                    break;
+                }
+                if (!FinishHeaders()) {
+                    SetError();
+                    return;
                 }
                 break;
-            }
 
-            case ParseState::BODY: {
-                if (response_chunked_) {
-                    ParseChunkedBody(rx_buffer_);
-                } else {
-                    ParseRegularBody(rx_buffer_);
-                }
+            case ParseState::BODY:
+                ParseRegularBody();
                 break;
-            }
 
-            case ParseState::CHUNK_SIZE: {
-                if (!HasCompleteLine(rx_buffer_)) return;  // 需要更多数据
-
-                std::string line = GetNextLine(rx_buffer_);
-                while (line.empty()) {
-                    // 忽略 chunk 之间可能出现的空行
-                    if (!HasCompleteLine(rx_buffer_)) return;
-                    line = GetNextLine(rx_buffer_);
+            case ParseState::CHUNK_SIZE:
+                if (!TakeLine(&line)) return;
+                if (line.empty()) {
+                    break;  // Tolerate a stray CRLF between chunks.
                 }
-
-                chunk_size_ = ParseChunkSize(line);
+                if (!ParseChunkSize(line, &chunk_size_)) {
+                    SetError();
+                    return;
+                }
                 chunk_received_ = 0;
-
-                if (chunk_size_ == 0) {
-                    parse_state_ = ParseState::CHUNK_TRAILER;
-                } else {
-                    parse_state_ = ParseState::CHUNK_DATA;
-                }
+                parse_state_ = chunk_size_ == 0 ? ParseState::CHUNK_TRAILER : ParseState::CHUNK_DATA;
                 break;
-            }
 
             case ParseState::CHUNK_DATA: {
                 size_t available = std::min(rx_buffer_.size(), chunk_size_ - chunk_received_);
-                if (available > 0) {
-                    std::string chunk_data = rx_buffer_.substr(0, available);
-                    AddBodyData(std::move(chunk_data));
-                    total_body_received_ += available;
-                    rx_buffer_.erase(0, available);
-                    chunk_received_ += available;
+                AddBodyData(rx_buffer_.substr(0, available));
+                total_body_received_ += available;
+                rx_buffer_.erase(0, available);
+                chunk_received_ += available;
 
-                    if (chunk_received_ == chunk_size_) {
-                        // 跳过 chunk 后的 CRLF
-                        if (rx_buffer_.size() >= 2 && rx_buffer_.substr(0, 2) == "\r\n") {
-                            rx_buffer_.erase(0, 2);
-                        }
-                        parse_state_ = ParseState::CHUNK_SIZE;
+                if (chunk_received_ == chunk_size_) {
+                    // A CRLF split into the next packet is skipped by CHUNK_SIZE.
+                    if (rx_buffer_.compare(0, 2, "\r\n") == 0) {
+                        rx_buffer_.erase(0, 2);
                     }
+                    parse_state_ = ParseState::CHUNK_SIZE;
                 }
-                if (available == 0) return;  // 需要更多数据
                 break;
             }
 
-            case ParseState::CHUNK_TRAILER: {
-                if (!HasCompleteLine(rx_buffer_)) return;  // 需要更多数据
-
-                std::string line = GetNextLine(rx_buffer_);
-
+            case ParseState::CHUNK_TRAILER:
+                if (!TakeLine(&line)) return;
                 if (line.empty()) {
-                    parse_state_ = ParseState::COMPLETE;
-                    eof_ = true;
-                    xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
+                    CompleteResponse();
                 }
-                // 忽略 trailer 头部
-                break;
-            }
+                break;  // Trailer fields are ignored.
 
             case ParseState::COMPLETE:
                 return;
         }
     }
-
-    // 检查是否完成（非 chunked 模式）
-    if (parse_state_ == ParseState::BODY && !response_chunked_ &&
-        content_length_ > 0 && total_body_received_ >= content_length_) {
-        parse_state_ = ParseState::COMPLETE;
-        eof_ = true;
-        xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
-        ESP_LOGD(TAG, "HTTP response body received: %u/%u bytes", total_body_received_, content_length_);
-    }
 }
 
-bool HttpClient::ParseStatusLine(const std::string& line) {
-    // HTTP/1.1 200 OK
-    std::istringstream iss(line);
-    std::string version, status_str, reason;
-
-    if (!(iss >> version >> status_str)) {
-        ESP_LOGE(TAG, "Invalid status line: %s", line.c_str());
+bool HttpClient::TakeLine(std::string* line) {
+    const size_t pos = rx_buffer_.find('\n');
+    if (pos == std::string::npos || pos > kMaxLineLength) {
+        if (rx_buffer_.size() > kMaxLineLength) {
+            ESP_LOGE(TAG, "Response line exceeds %u bytes", static_cast<unsigned>(kMaxLineLength));
+            SetError();
+        }
         return false;
     }
 
-    std::getline(iss, reason);  // 获取剩余部分作为原因短语
+    line->assign(rx_buffer_, 0, pos);
+    rx_buffer_.erase(0, pos + 1);
+    if (!line->empty() && line->back() == '\r') {
+        line->pop_back();
+    }
+    return true;
+}
 
-    // 安全地解析状态码
+bool HttpClient::ParseStatusLine(const std::string& line) {
+    // HTTP/1.1 200 OK: the status code is the second whitespace-separated token.
+    constexpr const char* kSpaces = " \t\r\n";
+    const size_t version_start = line.find_first_not_of(kSpaces);
+    const size_t version_end = line.find_first_of(kSpaces, version_start);
+    const size_t status_start = line.find_first_not_of(kSpaces, version_end);
+    if (version_start == std::string::npos || status_start == std::string::npos ||
+        line.compare(version_start, 5, "HTTP/") != 0) {
+        ESP_LOGE(TAG, "Invalid status line: %s", line.c_str());
+        return false;
+    }
+    const size_t status_end = line.find_first_of(kSpaces, status_start);
+    const std::string status_str = line.substr(status_start, status_end - status_start);
+
     char* endptr;
     long status = strtol(status_str.c_str(), &endptr, 10);
 
@@ -491,160 +442,157 @@ bool HttpClient::ParseHeaderLine(const std::string& line) {
     std::string key = line.substr(0, colon_pos);
     std::string value = line.substr(colon_pos + 1);
 
-    // 去除前后空格
     key.erase(0, key.find_first_not_of(" \t"));
     key.erase(key.find_last_not_of(" \t") + 1);
     value.erase(0, value.find_first_not_of(" \t"));
     value.erase(value.find_last_not_of(" \t\r\n") + 1);
 
-    // 转换为小写键名用于存储和查找，同时保存原始key
-    std::string lower_key = key;
-    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
-
-    response_headers_[lower_key] = HeaderEntry(key, value);
-
+    response_headers_[ToLower(key)] = HeaderEntry(key, value);
     return true;
 }
 
-void HttpClient::ParseChunkedBody(const std::string& data) {
-    // Chunked body 在 ProcessReceivedData 中的状态机中处理
+bool HttpClient::FinishHeaders() {
+    auto conn_it = response_headers_.find("connection");
+    if (conn_it != response_headers_.end()) {
+        const std::string conn_value = ToLower(conn_it->second.value);
+        if (conn_value.find("keep-alive") != std::string::npos) {
+            server_keep_alive_ = true;
+        } else if (conn_value.find("close") != std::string::npos) {
+            server_keep_alive_ = false;
+        }
+    }
+
+    // RFC 9112 section 6.3: these responses end at the header block whatever
+    // their framing headers say.
+    const bool no_body = method_ == "HEAD" || (status_code_ >= 100 && status_code_ < 200) ||
+                         status_code_ == 204 || status_code_ == 304;
+    auto te_it = response_headers_.find("transfer-encoding");
+    const bool chunked = !no_body && te_it != response_headers_.end() &&
+                         ToLower(te_it->second.value).find("chunked") != std::string::npos;
+    auto cl_it = response_headers_.find("content-length");
+    const bool has_length = !no_body && !chunked && cl_it != response_headers_.end();
+
+    if (has_length) {
+        const std::string& value = cl_it->second.value;
+        char* endptr;
+        unsigned long length = strtoul(value.c_str(), &endptr, 10);
+        if (value.empty() || !std::isdigit(static_cast<unsigned char>(value[0])) || *endptr != '\0') {
+            ESP_LOGE(TAG, "Invalid Content-Length: %s", value.c_str());
+            return false;
+        }
+        content_length_ = static_cast<size_t>(length);
+    }
+
+    headers_received_ = true;
+    if (no_body || (has_length && content_length_ == 0)) {
+        CompleteResponse();
+    } else if (chunked) {
+        response_chunked_ = true;
+        parse_state_ = ParseState::CHUNK_SIZE;
+    } else {
+        // Without Content-Length the body ends when the peer closes.
+        parse_state_ = ParseState::BODY;
+    }
+    xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_HEADERS_RECEIVED);
+    return true;
 }
 
-void HttpClient::ParseRegularBody(const std::string& data) {
-    if (!data.empty()) {
-        AddBodyData(data);  // 使用新的方法添加数据
-        total_body_received_ += data.size();  // 累加接收的字节数
-        rx_buffer_.clear();
+void HttpClient::ParseRegularBody() {
+    size_t take = rx_buffer_.size();
+    if (content_length_ > 0) {
+        take = std::min(take, content_length_ - total_body_received_);
+    }
+
+    if (take == rx_buffer_.size()) {
+        AddBodyData(std::move(rx_buffer_));
+    } else {
+        AddBodyData(rx_buffer_.substr(0, take));
+        ESP_LOGW(TAG, "Discarding %u bytes after the response body",
+                 static_cast<unsigned>(rx_buffer_.size() - take));
+        // The stream position is unknown, so the connection must not be reused.
+        server_keep_alive_ = false;
+    }
+    rx_buffer_.clear();
+    total_body_received_ += take;
+
+    if (content_length_ > 0 && total_body_received_ >= content_length_) {
+        ESP_LOGD(TAG, "HTTP response body received: %u/%u bytes", total_body_received_, content_length_);
+        CompleteResponse();
     }
 }
 
-size_t HttpClient::ParseChunkSize(const std::string& chunk_size_line) {
-    // 解析 chunk size（十六进制）
-    std::string size_str = chunk_size_line;
-
-    // 移除 CRLF 和任何扩展
-    size_t semi_pos = size_str.find(';');
-    if (semi_pos != std::string::npos) {
-        size_str = size_str.substr(0, semi_pos);
-    }
-
+bool HttpClient::ParseChunkSize(const std::string& chunk_size_line, size_t* chunk_size) {
+    // Hexadecimal size, optionally followed by ";extension".
+    std::string size_str = chunk_size_line.substr(0, chunk_size_line.find(';'));
     size_str.erase(size_str.find_last_not_of(" \t\r\n") + 1);
 
-    // 安全地解析十六进制 chunk 大小
     char* endptr;
-    unsigned long chunk_size = strtoul(size_str.c_str(), &endptr, 16);
-
-    if (endptr == size_str.c_str() || *endptr != '\0') {
+    unsigned long size = strtoul(size_str.c_str(), &endptr, 16);
+    if (size_str.empty() || !std::isxdigit(static_cast<unsigned char>(size_str[0])) || *endptr != '\0') {
         ESP_LOGE(TAG, "Parse chunk size failed: %s", size_str.c_str());
-        return 0;
+        return false;
     }
 
-    return static_cast<size_t>(chunk_size);
+    *chunk_size = static_cast<size_t>(size);
+    return true;
 }
 
-std::string HttpClient::GetNextLine(std::string& buffer) {
-    size_t pos = buffer.find('\n');
-    if (pos == std::string::npos) {
-        return "";  // 没有完整的行
-    }
-
-    std::string line = buffer.substr(0, pos);
-    buffer.erase(0, pos + 1);
-
-    // 移除 CR
-    if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-    }
-
-    return line;
-}
-
-bool HttpClient::HasCompleteLine(const std::string& buffer) {
-    return buffer.find('\n') != std::string::npos;
+void HttpClient::CompleteResponse() {
+    parse_state_ = ParseState::COMPLETE;
+    eof_ = true;
+    xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_COMPLETE);
+    WakeReaders();
 }
 
 void HttpClient::SetError() {
     ESP_LOGE(TAG, "HTTP parse error");
-    last_error_ = NetworkError::ProtocolError();
+    response_error_ = NetworkError::ProtocolError();
+    connection_error_ = true;
+    server_keep_alive_ = false;
     xEventGroupSetBits(event_group_handle_, EC801E_HTTP_EVENT_ERROR);
+    WakeReaders();
+}
+
+void HttpClient::WakeReaders() {
+    // Readers test their predicates under read_mutex_. Passing through it
+    // after a state change means a reader either sees the new state or is
+    // already waiting, so the notification cannot be lost in between.
+    { std::lock_guard<std::mutex> read_lock(read_mutex_); }
+    cv_.notify_all();
+    write_cv_.notify_all();
 }
 
 NetworkResult<int> HttpClient::Read(char* buffer, size_t buffer_size) {
+    if (buffer_size == 0) {
+        return 0;
+    }
+
     std::unique_lock<std::mutex> read_lock(read_mutex_);
-
-    // 如果连接异常断开，返回错误
-    if (connection_error_) {
-        return FailValue<int>(NetworkError::ServerDisconnected());
-    }
-
-    // 如果已经到达文件末尾且没有更多数据，返回0
-    if (eof_ && body_chunks_.empty()) {
-        return 0;
-    }
-
-    // 如果有数据可读，直接返回
-    while (!body_chunks_.empty()) {
-        auto& front_chunk = body_chunks_.front();
-        size_t bytes_read = front_chunk.read(buffer, buffer_size);
-
-        if (bytes_read > 0) {
-            // 如果当前chunk已读完，移除它
-            if (front_chunk.empty()) {
-                body_chunks_.pop_front();
-            }
-            // 通知等待的写入操作
-            write_cv_.notify_one();
-            return static_cast<int>(bytes_read);
-        }
-
-        // 如果chunk为空，移除它并继续下一个
-        body_chunks_.pop_front();
-    }
-
-    // 如果连接已断开，检查是否有错误
-    if (!connected_) {
-        if (connection_error_) {
-            return FailValue<int>(NetworkError::ServerDisconnected());
-        }
-        return 0;
-    }
-
-    // 等待数据或连接关闭
-    auto timeout = std::chrono::milliseconds(timeout_ms_);
-    bool received = cv_.wait_for(read_lock, timeout, [this] {
-        return !body_chunks_.empty() || eof_ || !connected_ || connection_error_;
-    });
-
-    if (!received) {
+    auto ready = [this] {
+        return connection_error_ || !body_chunks_.empty() || eof_ || !connected_;
+    };
+    if (!cv_.wait_for(read_lock, std::chrono::milliseconds(timeout_ms_), ready)) {
         ESP_LOGE(TAG, "Wait for HTTP content receive timeout");
         return FailValue<int>(NetworkError::Timeout());
     }
 
-    // 再次检查连接错误状态
     if (connection_error_) {
-        return FailValue<int>(NetworkError::ServerDisconnected());
+        return FailValue<int>(response_error_);
     }
 
-    // 再次检查是否有数据可读
     while (!body_chunks_.empty()) {
         auto& front_chunk = body_chunks_.front();
         size_t bytes_read = front_chunk.read(buffer, buffer_size);
-
+        if (front_chunk.empty()) {
+            body_chunks_.pop_front();
+        }
         if (bytes_read > 0) {
-            // 如果当前chunk已读完，移除它
-            if (front_chunk.empty()) {
-                body_chunks_.pop_front();
-            }
-            // 通知等待的写入操作
             write_cv_.notify_one();
             return static_cast<int>(bytes_read);
         }
-
-        // 如果chunk为空，移除它并继续下一个
-        body_chunks_.pop_front();
     }
 
-    // 连接已关闭或到达EOF，返回0
+    // End of body, or the connection was closed locally.
     return 0;
 }
 
@@ -667,11 +615,14 @@ NetworkResult<int> HttpClient::Write(const char* buffer, size_t buffer_size) {
             return send_or_fail("0\r\n\r\n");
         }
 
-        std::ostringstream chunk;
-        chunk << std::hex << buffer_size << "\r\n";
-        chunk.write(buffer, buffer_size);
-        chunk << "\r\n";
-        return send_or_fail(chunk.str());
+        char size_line[20];
+        const int size_len = snprintf(size_line, sizeof(size_line), "%zx\r\n", buffer_size);
+        std::string chunk;
+        chunk.reserve(size_len + buffer_size + 2);
+        chunk.append(size_line, size_len);
+        chunk.append(buffer, buffer_size);
+        chunk += "\r\n";
+        return send_or_fail(chunk);
     }
 
     if (buffer_size == 0) {
@@ -687,7 +638,7 @@ NetworkResult<int> HttpClient::GetStatusCode() {
                                         pdFALSE, pdFALSE, pdMS_TO_TICKS(timeout_ms_));
 
         if (bits & EC801E_HTTP_EVENT_ERROR) {
-            return FailValue<int>(last_error_.empty() ? NetworkError::ProtocolError() : last_error_);
+            return FailValue<int>(response_error_.empty() ? NetworkError::ProtocolError() : response_error_);
         }
         if (!(bits & EC801E_HTTP_EVENT_HEADERS_RECEIVED)) {
             ESP_LOGE(TAG, "Wait for HTTP headers receive timeout");
@@ -699,11 +650,7 @@ NetworkResult<int> HttpClient::GetStatusCode() {
 }
 
 std::string HttpClient::GetResponseHeader(const std::string& key) const {
-    // 转换为小写进行查找
-    std::string lower_key = key;
-    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
-    
-    auto it = response_headers_.find(lower_key);
+    auto it = response_headers_.find(ToLower(key));
     if (it != response_headers_.end()) {
         return it->second.value;
     }
@@ -712,11 +659,11 @@ std::string HttpClient::GetResponseHeader(const std::string& key) const {
 
 size_t HttpClient::GetBodyLength() {
     if (!headers_received_) {
-        static_cast<void>(GetStatusCode());  // 这会等待头部接收
+        static_cast<void>(GetStatusCode());  // Waits for the headers.
     }
 
     if (response_chunked_) {
-        return 0;  // Chunked 模式下长度未知
+        return 0;  // Unknown for chunked responses.
     }
 
     return content_length_;
@@ -726,31 +673,31 @@ void HttpClient::AddBodyData(const std::string& data) {
     if (data.empty()) return;
 
     std::lock_guard<std::mutex> read_lock(read_mutex_);
-    body_chunks_.emplace_back(data);  // 使用构造函数，避免额外的拷贝
-    cv_.notify_one();  // 通知有新数据
-    write_cv_.notify_one();  // 通知写入操作
+    body_chunks_.emplace_back(data);
+    cv_.notify_one();
+    write_cv_.notify_one();
 }
 
 void HttpClient::AddBodyData(std::string&& data) {
     if (data.empty()) return;
 
     std::lock_guard<std::mutex> read_lock(read_mutex_);
-    body_chunks_.emplace_back(std::move(data));  // 使用移动语义，避免拷贝
-    cv_.notify_one();  // 通知有新数据
-    write_cv_.notify_one();  // 通知写入操作
+    body_chunks_.emplace_back(std::move(data));
+    cv_.notify_one();
+    write_cv_.notify_one();
 }
 
 std::string HttpClient::ReadAll() {
-    // 必须通过 Read() 持续排空 body_chunks_：
-    // OnTcpData() 在队列达到 MAX_BODY_CHUNKS_SIZE (8KB) 时会在 write_cv_ 上阻塞，
-    // 直到有消费者读取。若这里只等 eof_ 而不读取，大于 8KB 的响应会与接收回调互相等待而死锁。
-    // 超时沿用 Read()：两次可读数据之间最多等待 timeout_ms_，而不是整份 body 一次性超时。
+    // Must keep draining body_chunks_ through Read(): OnTcpData() blocks on
+    // write_cv_ once MAX_BODY_CHUNKS_SIZE (8 KB) is queued, so waiting for eof_
+    // without reading would deadlock on responses larger than 8 KB.
+    // The Read() timeout applies between chunks, not to the whole body.
     std::string result;
     if (content_length_ > 0) {
         result.reserve(content_length_);
     }
-    // 读缓冲放在堆上：ReadAll() 会从 OTA / MCP / 相机 explain 等小栈任务调用，
-    // 1KB 的栈数组容易把剩余栈打穿。
+    // Heap scratch buffer: ReadAll() runs on small-stack tasks (OTA, MCP,
+    // camera explain) where a 1 KB stack array can overflow.
     std::string buffer(1024, '\0');
 
     while (true) {
@@ -769,46 +716,42 @@ std::string HttpClient::ReadAll() {
 }
 
 bool HttpClient::IsDataComplete() const {
-    // 对于chunked编码，如果parse_state_是COMPLETE，说明接收完整
     if (response_chunked_) {
         return parse_state_ == ParseState::COMPLETE;
     }
 
-    // 对于固定长度，检查是否接收了完整的content-length
     if (content_length_ > 0) {
         return total_body_received_ >= content_length_;
     }
 
-    // 如果没有content-length且不是chunked，当连接关闭时认为完整
-    // 这种情况通常用于HTTP/1.0或者content-length为0的响应
+    // No Content-Length and not chunked: the body is delimited by the close.
     return true;
 }
 
-
 void HttpClient::ResetRequestState() {
-    // 重置请求状态，但保持连接
+    // A reused connection's receive task may deliver stray bytes at any time.
+    std::lock_guard<std::mutex> lock(mutex_);
     status_code_ = -1;
     response_headers_.clear();
     {
         std::lock_guard<std::mutex> read_lock(read_mutex_);
         body_chunks_.clear();
     }
-    body_offset_ = 0;
     content_length_ = 0;
     total_body_received_ = 0;
     eof_ = false;
     headers_received_ = false;
     response_chunked_ = false;
-    request_chunked_ = false;  // 重置请求 chunked 标志
+    request_chunked_ = false;
     connection_error_ = false;
+    response_error_ = {};
     parse_state_ = ParseState::STATUS_LINE;
     chunk_size_ = 0;
     chunk_received_ = 0;
     rx_buffer_.clear();
 
-    // 注意：不清除 content_ 和 headers_
-    // content_ 会在 Open() 发送请求后清空
-    // headers_ 由用户在每次请求前重新配置
+    // content_ and headers_ are kept: Open() sends and then clears them, and
+    // callers configure headers before each request.
 
     xEventGroupClearBits(event_group_handle_,
                          EC801E_HTTP_EVENT_HEADERS_RECEIVED |
