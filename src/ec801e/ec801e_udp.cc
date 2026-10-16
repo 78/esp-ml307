@@ -50,8 +50,10 @@ Ec801EUdp::Ec801EUdp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_
                 xEventGroupSetBits(event_group_handle_, EC801E_UDP_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
+            // Runs on the AT event task: sending AT+QICLOSE here would wait on
+            // this task until timeout. Disconnect()/Connect() close the socket.
             xEventGroupSetBits(event_group_handle_, EC801E_UDP_ERROR);
-            Disconnect();
+            connected_ = false;
         }
     });
 }

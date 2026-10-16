@@ -31,9 +31,15 @@ Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_ua
             if (arguments[0].int_value == udp_id_) {
                 xEventGroupSetBits(event_group_handle_, ML307_UDP_SEND_COMPLETE);
             }
-        } else if (command == "MIPURC" && arguments.size() == 4) {
+        } else if (command == "MIPURC" && arguments.size() >= 2) {
+            // +MIPURC: "disconn",<id>,<reason> has only 3 arguments
             if (arguments[1].int_value == udp_id_) {
                 if (arguments[0].string_value == "rudp") {
+                    // +MIPURC: "rudp",<id>,<len>,<data>
+                    if (arguments.size() < 4) {
+                        ESP_LOGE(TAG, "Malformed MIPURC rudp");
+                        return;
+                    }
                     if (connected_ && message_callback_) {
                         message_callback_(at_uart_->DecodeHex(arguments[3].string_value));
                     }
@@ -52,8 +58,10 @@ Ml307Udp::Ml307Udp(std::shared_ptr<AtUart> at_uart, int udp_id) : at_uart_(at_ua
                 xEventGroupSetBits(event_group_handle_, ML307_UDP_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
+            // Runs on the AT event task: sending AT+MIPCLOSE here would wait on
+            // this task until timeout. Disconnect()/Connect() close the socket.
             xEventGroupSetBits(event_group_handle_, ML307_UDP_ERROR);
-            Disconnect();
+            connected_ = false;
         }
     });
 }

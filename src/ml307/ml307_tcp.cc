@@ -29,9 +29,14 @@ Ml307Tcp::Ml307Tcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_ua
             if (arguments[0].int_value == tcp_id_) {
                 xEventGroupSetBits(event_group_handle_, ML307_TCP_SEND_COMPLETE);
             }
-        } else if (command == "MIPURC" && arguments.size() >= 3) {
+        } else if (command == "MIPURC" && arguments.size() >= 2) {
             if (arguments[1].int_value == tcp_id_) {
                 if (arguments[0].string_value == "rtcp") {
+                    // +MIPURC: "rtcp",<id>,<len>,<data>
+                    if (arguments.size() < 4) {
+                        ESP_LOGE(TAG, "Malformed MIPURC rtcp");
+                        return;
+                    }
                     if (connected_ && stream_callback_) {
                         stream_callback_(at_uart_->DecodeHex(arguments[3].string_value));
                     }
@@ -55,8 +60,14 @@ Ml307Tcp::Ml307Tcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_ua
                 xEventGroupSetBits(event_group_handle_, ML307_TCP_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
+            // Runs on the AT event task, which parses AT responses, so it must
+            // not send AT commands (Disconnect() would wait on itself until
+            // timeout). Received data was lost: mark the stream broken and leave
+            // AT+MIPCLOSE to Disconnect()/Connect(), as instance_active_ stays set.
             xEventGroupSetBits(event_group_handle_, ML307_TCP_ERROR);
-            Disconnect();
+            if (connected_.exchange(false) && disconnect_callback_) {
+                disconnect_callback_();
+            }
         }
     });
 }

@@ -9,6 +9,14 @@
 
 #define ESP_TCP_EVENT_RECEIVE_TASK_EXIT 1
 
+// Same default as esp-tls (ESP_TLS_DEFAULT_CONN_TIMEOUT) so http:// and
+// https:// fail within the same time when the data path is down.
+#define ESP_TCP_CONNECT_TIMEOUT_MS 10000
+#define ESP_TCP_SEND_TIMEOUT_MS 10000
+// lwIP can lose the wake-up of a blocked recv() when the socket is shut down
+// concurrently, so the receive task re-checks connected_ at this interval.
+#define ESP_TCP_RECEIVE_POLL_MS 1000
+
 class EspTcp : public Tcp {
 public:
     EspTcp();
@@ -19,17 +27,13 @@ public:
     int Send(const std::string& data) override;
 
 private:
+    // Owned by the caller side: only Disconnect() closes it, after the receive
+    // task has exited, so the fd number cannot be closed twice.
     int tcp_fd_ = -1;
     EventGroupHandle_t event_group_ = nullptr;
     TaskHandle_t receive_task_handle_ = nullptr;
-    // Whether the receive task has been created (used to safely wait for it
-    // to exit during teardown, even after a passive disconnect closed the fd)
-    bool receive_task_started_ = false;
 
     void ReceiveTask();
-    // 内部断开处理函数
-    // wait_for_task: 是否等待接收任务退出（主动断开为true，被动断开为false）
-    void DoDisconnect(bool wait_for_task);
 };
 
 #endif // _ESP_TCP_H_

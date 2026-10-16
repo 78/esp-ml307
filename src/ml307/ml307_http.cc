@@ -10,9 +10,17 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
     event_group_handle_ = xEventGroupCreate();
 
     urc_callback_it_ = at_uart_->RegisterUrcCallback([this](const std::string& command, const std::vector<AtArgumentValue>& arguments) {
-        if (command == "MHTTPURC") {
+        if (command == "MHTTPURC" && arguments.size() >= 2) {
             if (arguments[1].int_value == http_id_) {
                 auto& type = arguments[0].string_value;
+                if ((type == "header" || type == "err") && arguments.size() < 3) {
+                    ESP_LOGE(TAG, "Malformed MHTTPURC %s", type.c_str());
+                    return;
+                }
+                if (type == "content" && arguments.size() < 5) {
+                    ESP_LOGE(TAG, "Malformed MHTTPURC content");
+                    return;
+                }
                 if (type == "header") {
                     eof_ = false;
                     body_offset_ = 0;
@@ -50,7 +58,7 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
                     body_offset_ += arguments[4].int_value;
                     if (arguments[3].int_value > body_offset_) {
                         ESP_LOGE(TAG, "body_offset_: %u, arguments[3].int_value: %d", body_offset_, arguments[3].int_value);
-                        Close();
+                        AbortLocked(NetworkError::ReceiveFailed());
                         return;
                     }
                     cv_.notify_one();  // 使用条件变量通知
@@ -64,20 +72,34 @@ Ml307Http::Ml307Http(std::shared_ptr<AtUart> at_uart) : at_uart_(at_uart) {
                     ESP_LOGE(TAG, "Unknown HTTP event: %s", type.c_str());
                 }
             }
-        } else if (command == "MHTTPCREATE") {
+        } else if (command == "MHTTPCREATE" && arguments.size() >= 1) {
             http_id_ = arguments[0].int_value;
             instance_active_ = true;
             xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_INITIALIZED);
         } else if (command == "FIFO_OVERFLOW") {
-            xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_ERROR);
-            Close();
+            std::lock_guard<std::mutex> lock(mutex_);
+            AbortLocked(NetworkError::ReceiveFailed());
         }
     });
+}
+
+// Called from URC callbacks on the AT event task with mutex_ held. It must not
+// send AT commands: the response could only be parsed by this same task.
+// instance_active_ stays set so Close() still deletes the modem instance.
+void Ml307Http::AbortLocked(NetworkError error) {
+    aborted_ = true;
+    eof_ = true;
+    last_error_ = error;
+    xEventGroupSetBits(event_group_handle_, ML307_HTTP_EVENT_ERROR);
+    cv_.notify_all();
 }
 
 NetworkResult<int> Ml307Http::Read(char* buffer, size_t buffer_size) {
     std::unique_lock<std::mutex> lock(mutex_);
 
+    if (aborted_) {
+        return FailValue<int>(last_error_);
+    }
     if (eof_ && body_.empty()) {
         return 0;
     }
@@ -92,7 +114,7 @@ NetworkResult<int> Ml307Http::Read(char* buffer, size_t buffer_size) {
                  body_offset_, eof_);
         return FailValue<int>(NetworkError::Timeout());
     }
-    if (!instance_active_) {
+    if (!instance_active_ || aborted_) {
         return FailValue<int>(last_error_.empty() ? NetworkError::ServerDisconnected() : last_error_);
     }
 
@@ -181,6 +203,11 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
 NetworkResult<> Ml307Http::Open(const std::string& method, const std::string& url) {
     method_ = method;
     url_ = url;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        aborted_ = false;
+    }
+    xEventGroupClearBits(event_group_handle_, ML307_HTTP_EVENT_ERROR);
     
     // 判断是否为需要发送内容的HTTP方法
     bool method_supports_content = (method_ == "POST" || method_ == "PUT");

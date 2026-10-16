@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.7.7 — 2026-10-16
+## 3.8.0 — 2026-10-16
 
 Fixes in the built-in HTTP/1.1 client (`HttpClient`, used by the ESP and EC801E backends):
 
@@ -13,6 +13,21 @@ Fixes in the built-in HTTP/1.1 client (`HttpClient`, used by the ESP and EC801E 
 - Match `Transfer-Encoding: chunked` case-insensitively, skip interim 1xx responses, drop bytes beyond `Content-Length`, and return 0 from `Read()` with an empty buffer instead of discarding queued data.
 - Build requests without `std::ostringstream` to avoid linking iostream/locale code. Translate source comments to English.
 - Add host regression tests for `HttpClient` to `tests/run_host_tests.py`.
+
+Transport fixes:
+
+- `EspTcp`: connect in non-blocking mode with a 10 s timeout (same as esp-tls) and set a 10 s `SO_SNDTIMEO`. Blocking `connect()` followed `CONFIG_LWIP_TCP_SYNMAXRTX` and could hang for minutes on `http://` URLs when the data path was down.
+- `EspTcp`: only `Disconnect()` closes the fd, after `shutdown()` has woken the receive task and it has exited. A passive close no longer closes the fd from the receive task, which could race with `Disconnect()` and close a socket that another task had just been given the same number. `Connect()` cleans up after a passive disconnect, and the disconnect callback fires once. `connected_` is set again before the receive task starts, so the task can no longer exit before its first `recv()` (#62).
+- `EspTcp`/`EspUdp`: give the receive socket a 1 s `SO_RCVTIMEO` and re-check `connected_` on timeout. lwIP can lose the wake-up of a `recv()` that is just starting when the socket is shut down or closed; the task then blocked forever, `Disconnect()` waited 10 s and the task outlived the object (#63). `EspSsl` waits in `select()`, which does not have this race.
+- `EspSsl`: switch the socket to non-blocking after the handshake and serialize every mbedTLS read/write with a mutex; waiting happens in `select()` outside the lock. The receive task and `Send()` previously drove the same SSL context concurrently, which is undefined, e.g. for TLS 1.3 NewSessionTicket processing.
+- `EspSsl`: fail `Connect()` when the receive task cannot be created, bound `Send()` to 10 s without progress instead of retrying `WANT_WRITE` forever, allow `Connect()` again after a passive disconnect, and stop aborting via `ESP_ERROR_CHECK` in `Disconnect()`.
+- `EspTcp`/`EspUdp`: resolve with `getaddrinfo()` instead of the non-reentrant `gethostbyname()`/`inet_ntoa()`.
+- `EspUdp`: `Connect()` releases the fd left by a receive error instead of leaking it, check `xTaskCreate()`, and keep receiving after empty datagrams.
+- `WebSocket`: reset handshake and frame state on reconnect, destroy the transport first in the destructor and after a failed handshake, and fail the connection on frames or messages larger than `WebSocket::MAX_MESSAGE_SIZE` (256 KB). A 64-bit length could previously grow the buffer without limit or overflow the length check.
+- ML307/EC801E: on `FIFO_OVERFLOW`, mark TCP/SSL/UDP/HTTP instances broken without sending AT commands from the AT event task, which used to block that task (and every in-flight AT command) until timeout once per instance. The close command is sent by the next `Disconnect()`/`Connect()`/`Close()`.
+- ML307: check URC argument counts before indexing (`MIPURC` in `Ml307Tcp`/`Ml307Udp`, `MHTTPURC`/`MHTTPCREATE` in `Ml307Http`); `Ml307Udp` now handles the 3-argument `disconn` URC. `Ec801ESsl` frees its event group.
+- `WebSocket`: add `OnPing()` and `SendPong()`. With an `OnPing` callback set, the library no longer replies to Pings by itself, so callers on AT transports can send the Pong from another task; the automatic reply ran on the AT event task and stalled it until the send timed out. Without a callback the Pong is still sent automatically.
+- Add host regression tests for `WebSocket`.
 
 ## 3.7.6 — 2026-10-15
 

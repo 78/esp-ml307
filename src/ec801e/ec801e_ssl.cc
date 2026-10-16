@@ -60,8 +60,14 @@ Ec801ESsl::Ec801ESsl(std::shared_ptr<AtUart> at_uart, int ssl_id) : at_uart_(at_
                 xEventGroupSetBits(event_group_handle_, EC801E_SSL_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
+            // Runs on the AT event task, which parses AT responses, so it must
+            // not send AT commands (Disconnect() would wait on itself until
+            // timeout). Received data was lost: mark the stream broken and leave
+            // AT+QSSLCLOSE to Disconnect()/Connect(), as instance_active_ stays set.
             xEventGroupSetBits(event_group_handle_, EC801E_SSL_ERROR);
-            Disconnect();
+            if (connected_.exchange(false) && disconnect_callback_) {
+                disconnect_callback_();
+            }
         }
     });
 }
@@ -69,6 +75,9 @@ Ec801ESsl::Ec801ESsl(std::shared_ptr<AtUart> at_uart, int ssl_id) : at_uart_(at_
 Ec801ESsl::~Ec801ESsl() {
     Disconnect();
     at_uart_->UnregisterUrcCallback(urc_callback_it_);
+    if (event_group_handle_) {
+        vEventGroupDelete(event_group_handle_);
+    }
 }
 
 NetworkResult<> Ec801ESsl::Connect(const std::string& host, int port) {

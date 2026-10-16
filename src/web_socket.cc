@@ -3,10 +3,12 @@
 #include <esp_log.h>
 #include <cstdlib>
 #include <cstring>
-#include <esp_pthread.h>
 
 
 #define TAG "WebSocket"
+
+// Upper bound for the HTTP upgrade response headers
+static constexpr size_t MAX_HANDSHAKE_RESPONSE_SIZE = 8192;
 
 static std::string base64_encode(const unsigned char *data, size_t len) {
     const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -46,9 +48,11 @@ WebSocket::WebSocket(NetworkInterface* network, int connect_id) : network_(netwo
 }
 
 WebSocket::~WebSocket() {
-    if (connected_) {
-        tcp_->Disconnect();
-    }
+    // Destroying the transport disconnects it and joins its receive task, whose
+    // callbacks use the event group and members declared after tcp_ (destroyed
+    // before it). The TCP link may be up even when connected_ is false, e.g.
+    // after a failed handshake.
+    tcp_.reset();
     if (handshake_event_group_) {
         vEventGroupDelete(handshake_event_group_);
     }
@@ -124,13 +128,28 @@ NetworkResult<> WebSocket::Connect(const char* uri) {
     std::string base64_key = base64_encode(reinterpret_cast<const unsigned char*>(key), 16);
     SetHeader("Sec-WebSocket-Key", base64_key.c_str());
 
+    // Destroy the previous transport before resetting state: this joins its
+    // receive task, so it cannot run OnTcpData() concurrently.
+    tcp_.reset();
+    connected_ = false;
+    handshake_completed_ = false;
+    receive_failed_ = false;
+    receive_buffer_.clear();
+    continuation_ = false;
+    current_message_.clear();
+    is_fragmented_ = false;
+    is_binary_ = false;
+
     if (protocol == "wss" || protocol == "https") {
         tcp_ = network_->CreateSsl(connect_id_);
     } else {
         tcp_ = network_->CreateTcp(connect_id_);
     }
+    if (!tcp_) {
+        ESP_LOGE(TAG, "Failed to create transport");
+        return Fail(NetworkError::NotInitialized());
+    }
 
-    connected_ = false;
     // 使用 tcp 建立连接
     if (auto result = tcp_->Connect(host, std::stoi(port)); !result) {
         ESP_LOGE(TAG, "Failed to connect to server: %s", result.error().ToString().c_str());
@@ -158,16 +177,14 @@ NetworkResult<> WebSocket::Connect(const char* uri) {
 
     // 设置断开连接回调
     tcp_->OnDisconnected([this]() {
-        if (connected_) {
-            connected_ = false;
-            if (on_disconnected_) {
-                on_disconnected_();
-            }
+        if (connected_.exchange(false) && on_disconnected_) {
+            on_disconnected_();
         }
     });
 
     if (tcp_->Send(request) < 0) {
         ESP_LOGE(TAG, "Failed to send WebSocket handshake request");
+        tcp_->Disconnect();
         return Fail(NetworkError::TransmitFailed());
     }
 
@@ -184,21 +201,30 @@ NetworkResult<> WebSocket::Connect(const char* uri) {
     if (bits & HANDSHAKE_SUCCESS_BIT) {
         ESP_LOGI(TAG, "WebSocket handshake done, cost=%u tcp=%u handshake=%u", t_handshaked - t_connect, t_connected - t_connect, t_handshaked - t_connected);
         connected_ = true;
+        // A bad frame right behind the 101 response fails before connected_ is set
+        if (receive_failed_) {
+            connected_ = false;
+            tcp_->Disconnect();
+            return Fail(NetworkError::ProtocolError());
+        }
         if (on_connected_) {
             on_connected_();
         }
         return {};
-    } else if (bits & HANDSHAKE_FAILED_BIT) {
+    }
+
+    // Close the TCP link so late data cannot reach OnTcpData()
+    tcp_->Disconnect();
+    if (bits & HANDSHAKE_FAILED_BIT) {
         ESP_LOGE(TAG, "WebSocket handshake failed");
         auto err = NetworkError::ProtocolError();
         if (on_error_) {
             on_error_(err);
         }
         return Fail(err);
-    } else {
-        ESP_LOGE(TAG, "WebSocket handshake timeout");
-        return Fail(NetworkError::Timeout());
     }
+    ESP_LOGE(TAG, "WebSocket handshake timeout");
+    return Fail(NetworkError::Timeout());
 }
 
 
@@ -252,11 +278,15 @@ bool WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
 
     // 发送帧
     std::lock_guard<std::mutex> lock(send_mutex_);
-    return tcp_->Send(frame) >= 0;
+    return tcp_ && tcp_->Send(frame) >= 0;
 }
 
 void WebSocket::Ping() {
     SendControlFrame(0x9, nullptr, 0);
+}
+
+bool WebSocket::SendPong(const void* data, size_t len) {
+    return SendControlFrame(0xA, data, len);
 }
 
 void WebSocket::Close() {
@@ -285,14 +315,50 @@ void WebSocket::OnPong(std::function<void(const char*, size_t)> callback) {
     on_pong_ = callback;
 }
 
+void WebSocket::OnPing(std::function<void(const char*, size_t)> callback) {
+    on_ping_ = callback;
+}
+
+
+// Runs on the transport's receive context, which for AT modems is the AT event
+// task: no close frame is sent here because a send would wait for an AT
+// response that only that task can parse. The owner tears the link down.
+void WebSocket::FailReceive() {
+    receive_failed_ = true;
+    receive_buffer_.clear();
+    receive_buffer_.shrink_to_fit();
+    current_message_.clear();
+    current_message_.shrink_to_fit();
+    is_fragmented_ = false;
+
+    if (connected_.exchange(false)) {
+        if (on_error_) {
+            on_error_(NetworkError::ProtocolError());
+        }
+        if (on_disconnected_) {
+            on_disconnected_();
+        }
+    }
+}
 
 void WebSocket::OnTcpData(const std::string& data) {
+    if (receive_failed_) {
+        return;
+    }
+
     // 将新数据追加到接收缓冲区
     receive_buffer_.append(data);
     
     if (!handshake_completed_) {
         // 检查握手响应
         size_t pos = receive_buffer_.find("\r\n\r\n");
+        if (pos == std::string::npos && receive_buffer_.size() > MAX_HANDSHAKE_RESPONSE_SIZE) {
+            ESP_LOGE(TAG, "WebSocket handshake response too large");
+            receive_failed_ = true;
+            receive_buffer_.clear();
+            xEventGroupSetBits(handshake_event_group_, HANDSHAKE_FAILED_BIT);
+            return;
+        }
         if (pos != std::string::npos) {
             std::string handshake_response = receive_buffer_.substr(0, pos + 4);
             receive_buffer_ = receive_buffer_.substr(pos + 4);
@@ -340,6 +406,15 @@ void WebSocket::OnTcpData(const std::string& data) {
             header_length += 8;
         }
 
+        // Without a bound, a 64-bit length makes the buffer grow without limit
+        // or overflows header_length + payload_length below.
+        size_t message_size = opcode == 0x0 ? current_message_.size() : 0;
+        if (payload_length > MAX_MESSAGE_SIZE || message_size + payload_length > MAX_MESSAGE_SIZE) {
+            ESP_LOGE(TAG, "Frame too large: payload=%llu, message=%u", (unsigned long long)payload_length, (unsigned)message_size);
+            FailReceive();
+            return;
+        }
+
         uint8_t mask_key[4] = {0};
         if (mask) {
             if (buffer_size - buffer_offset < header_length + 4) break; // 需要更多数据
@@ -384,13 +459,16 @@ void WebSocket::OnTcpData(const std::string& data) {
                 }
                 break;
             case 0x8: // 关闭帧
-                connected_ = false;
-                if (on_disconnected_) {
+                if (connected_.exchange(false) && on_disconnected_) {
                     on_disconnected_();
                 }
                 break;
             case 0x9: // Ping
-                SendControlFrame(0xA, payload.data(), payload_length);
+                if (on_ping_) {
+                    on_ping_(payload.data(), payload_length);
+                } else {
+                    SendPong(payload.data(), payload_length);
+                }
                 break;
             case 0xA: // Pong
                 if (on_pong_) {
@@ -443,5 +521,5 @@ bool WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
 
     // 发送帧
     std::lock_guard<std::mutex> lock(send_mutex_);
-    return tcp_->Send(frame) >= 0;
+    return tcp_ && tcp_->Send(frame) >= 0;
 }

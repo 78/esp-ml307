@@ -3,6 +3,7 @@
 
 #include "network_error.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 
@@ -26,7 +27,8 @@ protected:
 
     std::function<void(const std::string& data)> message_callback_;
     NetworkError last_error_{};
-    bool connected_ = false;
+    // Written by receive tasks / URC callbacks and read by callers.
+    std::atomic<bool> connected_ = false;
 };
 
 #endif  // UDP_H

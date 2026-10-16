@@ -59,8 +59,14 @@ Ec801ETcp::Ec801ETcp(std::shared_ptr<AtUart> at_uart, int tcp_id) : at_uart_(at_
                 xEventGroupSetBits(event_group_handle_, EC801E_TCP_INITIALIZED);
             }
         } else if (command == "FIFO_OVERFLOW") {
+            // Runs on the AT event task, which parses AT responses, so it must
+            // not send AT commands (Disconnect() would wait on itself until
+            // timeout). Received data was lost: mark the stream broken and leave
+            // AT+QICLOSE to Disconnect()/Connect(), as instance_active_ stays set.
             xEventGroupSetBits(event_group_handle_, EC801E_TCP_ERROR);
-            Disconnect();
+            if (connected_.exchange(false) && disconnect_callback_) {
+                disconnect_callback_();
+            }
         }
     });
 }

@@ -1,14 +1,60 @@
 #include "esp_tcp.h"
+#include "esp_resolve.h"
 
 #include <esp_log.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstring>
 #include <arpa/inet.h>
+#include <sys/select.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <errno.h>
 
 static const char *TAG = "EspTcp";
+
+static struct timeval MsToTimeval(int timeout_ms) {
+    struct timeval tv = {};
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    return tv;
+}
+
+// Blocking connect() follows CONFIG_LWIP_TCP_SYNMAXRTX and can take minutes
+// when SYNs are lost, so connect in non-blocking mode and wait with select().
+// Returns 0 or an errno value.
+static int ConnectWithTimeout(int fd, const struct sockaddr_in& addr, int timeout_ms) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return errno;
+    }
+
+    int err = 0;
+    if (connect(fd, reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        err = errno;
+        if (err == EINPROGRESS) {
+            fd_set write_fds;
+            FD_ZERO(&write_fds);
+            FD_SET(fd, &write_fds);
+            struct timeval tv = MsToTimeval(timeout_ms);
+            int ret = select(fd + 1, nullptr, &write_fds, nullptr, &tv);
+            if (ret == 0) {
+                err = ETIMEDOUT;
+            } else if (ret < 0) {
+                err = errno;
+            } else {
+                socklen_t len = sizeof(err);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+                    err = errno;
+                }
+            }
+        }
+    }
+
+    if (err == 0 && fcntl(fd, F_SETFL, flags) < 0) {
+        err = errno;
+    }
+    return err;
+}
 
 EspTcp::EspTcp() {
     event_group_ = xEventGroupCreate();
@@ -17,16 +63,6 @@ EspTcp::EspTcp() {
 EspTcp::~EspTcp() {
     Disconnect();
 
-    // Fix: the receive task may still be running its disconnect path
-    // (OnTcpDisconnected -> notify_all) after a passive disconnect, because
-    // the fd was already closed by the receive task itself. Wait for it to
-    // exit before destroying the event group, otherwise the task touches
-    // freed memory (use-after-free) on objects destroyed right after a
-    // passive disconnect.
-    if (receive_task_started_ && event_group_ != nullptr) {
-        xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-    }
-
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
         event_group_ = nullptr;
@@ -34,23 +70,17 @@ EspTcp::~EspTcp() {
 }
 
 NetworkResult<> EspTcp::Connect(const std::string& host, int port) {
-    // 确保先断开已有连接
-    if (connected_) {
-        Disconnect();
-    }
+    // Also releases the fd and joins the receive task left by a passive disconnect
+    Disconnect();
 
-    struct sockaddr_in server_addr;
-    bzero(&server_addr, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    // host is domain
-    struct hostent *server = gethostbyname(host.c_str());
-    if (server == NULL) {
-        ESP_LOGE(TAG, "Failed to get host by name");
-        return Fail(NetworkError::FromHErrno(h_errno));
+    auto server_addr = EspResolveIpv4(host, port);
+    if (!server_addr) {
+        ESP_LOGE(TAG, "Failed to resolve %s", host.c_str());
+        return Fail(server_addr.error());
     }
-    memcpy(&server_addr.sin_addr, server->h_addr, server->h_length);
-    ESP_LOGI(TAG, "Resolved %s -> %s", host.c_str(), inet_ntoa(*(struct in_addr *)server->h_addr));
+    char ip[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, &server_addr->sin_addr, ip, sizeof(ip));
+    ESP_LOGI(TAG, "Resolved %s -> %s", host.c_str(), ip);
 
     tcp_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_fd_ < 0) {
@@ -58,15 +88,25 @@ NetworkResult<> EspTcp::Connect(const std::string& host, int port) {
         return Fail(NetworkError::FromErrno(errno));
     }
 
-    int ret = connect(tcp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
-    if (ret < 0) {
-        auto err = NetworkError::FromErrno(errno);
-        ESP_LOGE(TAG, "Failed to connect to %s:%d: %s", host.c_str(), port, err.ToString().c_str());
+    int err = ConnectWithTimeout(tcp_fd_, *server_addr, ESP_TCP_CONNECT_TIMEOUT_MS);
+    if (err == 0) {
+        // Bound blocking send() too, otherwise a stalled peer blocks Send() forever
+        struct timeval send_timeout = MsToTimeval(ESP_TCP_SEND_TIMEOUT_MS);
+        struct timeval receive_timeout = MsToTimeval(ESP_TCP_RECEIVE_POLL_MS);
+        if (setsockopt(tcp_fd_, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout)) < 0 ||
+            setsockopt(tcp_fd_, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout)) < 0) {
+            err = errno;
+        }
+    }
+    if (err != 0) {
+        auto error = NetworkError::FromErrno(err);
+        ESP_LOGE(TAG, "Failed to connect to %s:%d: %s", host.c_str(), port, error.ToString().c_str());
         close(tcp_fd_);
         tcp_fd_ = -1;
-        return Fail(err);
+        return Fail(error);
     }
 
+    connected_ = true;
     xEventGroupClearBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT);
     BaseType_t rc = xTaskCreate([](void* arg) {
         EspTcp* tcp = (EspTcp*)arg;
@@ -76,55 +116,38 @@ NetworkResult<> EspTcp::Connect(const std::string& host, int port) {
     }, "tcp_receive", 4096, this, 1, &receive_task_handle_);
     if (rc != pdPASS) {
         ESP_LOGE(TAG, "Failed to create receive task");
+        connected_ = false;
+        receive_task_handle_ = nullptr;
         close(tcp_fd_);
         tcp_fd_ = -1;
         return Fail(NetworkError::FromErrno(ENOMEM));
     }
-    connected_ = true;
-    receive_task_started_ = true;
     return {};
 }
 
 void EspTcp::Disconnect() {
-    // 如果已经断开，直接返回
-    if (!connected_) {
-        // Fix: after a passive disconnect the fd is already closed (closed by
-        // the receive task itself), but the receive task may still be running
-        // its disconnect path. Wait for it to exit before returning, so that
-        // destroying the object right after Disconnect() is safe.
-        if (receive_task_started_ && event_group_ != nullptr) {
-            xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-        }
-        return;
+    bool was_connected = connected_.exchange(false);
+
+    // shutdown() wakes the blocked recv() but keeps the fd number reserved
+    // until close() below, after the receive task can no longer use it.
+    if (tcp_fd_ != -1) {
+        shutdown(tcp_fd_, SHUT_RDWR);
     }
 
-    // 主动断开，需要等待接收任务退出
-    DoDisconnect(true);
-}
-
-void EspTcp::DoDisconnect(bool wait_for_task) {
-    connected_ = false;
+    if (receive_task_handle_ != nullptr) {
+        auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+        if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
+            ESP_LOGE(TAG, "Failed to wait for receive task exit");
+        }
+        receive_task_handle_ = nullptr;
+    }
 
     if (tcp_fd_ != -1) {
         close(tcp_fd_);
         tcp_fd_ = -1;
     }
 
-    // Fix: the wait must NOT depend on the fd state. On a passive disconnect
-    // the receive task already closed the fd, so the old code skipped the
-    // wait entirely and the object could be destroyed while the receive task
-    // was still running callbacks (use-after-free race). When
-    // wait_for_task == false the caller IS the receive task, so no wait is
-    // needed in that case.
-    if (wait_for_task && receive_task_started_) {
-        auto bits = xEventGroupWaitBits(event_group_, ESP_TCP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
-        if (!(bits & ESP_TCP_EVENT_RECEIVE_TASK_EXIT)) {
-            ESP_LOGE(TAG, "Failed to wait for receive task exit");
-        }
-    }
-
-    // 断开连接时触发断开回调
-    if (disconnect_callback_) {
+    if (was_connected && disconnect_callback_) {
         disconnect_callback_();
     }
 }
@@ -158,12 +181,20 @@ void EspTcp::ReceiveTask() {
     while (connected_) {
         data.resize(1500);
         int ret = recv(tcp_fd_, data.data(), data.size(), 0);
+        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            continue;
+        }
         if (ret <= 0) {
-            if (ret < 0) {
-                ESP_LOGE(TAG, "TCP receive failed: %d", ret);
+            // Passive disconnect: only report it, Disconnect() releases the fd.
+            // exchange() keeps the callback to one call when Disconnect() races.
+            if (connected_.exchange(false)) {
+                if (ret < 0) {
+                    ESP_LOGE(TAG, "TCP receive failed: %d, errno=%d", ret, errno);
+                }
+                if (disconnect_callback_) {
+                    disconnect_callback_();
+                }
             }
-            // 被动断开，不需要等待接收任务退出（当前就是接收任务）
-            DoDisconnect(false);
             break;
         }
 
@@ -173,4 +204,3 @@ void EspTcp::ReceiveTask() {
         }
     }
 }
-

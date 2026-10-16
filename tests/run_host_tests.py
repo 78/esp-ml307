@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise production AtUart and HttpClient code with fake RTOS/transport primitives.
+"""Exercise production AtUart, HttpClient and WebSocket code with fake RTOS/transport primitives.
 
 ASan/UBSan cover the adapters; real GDMA, ISR timing, UART rates and TLS need hardware.
 """
@@ -48,6 +48,16 @@ def run_http_client_test(tmp):
     subprocess.run([str(binary)], check=True)
 
 
+def run_web_socket_test(tmp):
+    binary = Path(tmp) / 'web_socket_test'
+    subprocess.run([CXX, '-std=c++23', *SANITIZE, '-pthread', '-Wall', '-Werror',
+                    '-I', str(ROOT / 'tests/stubs'), '-I', str(ROOT / 'include'),
+                    str(ROOT / 'tests/web_socket_test.cpp'), str(ROOT / 'src/web_socket.cc'),
+                    '-o', str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
+
+
 with tempfile.TemporaryDirectory(prefix='esp-ml307-test-') as tmp:
     run_at_uart_test(tmp)
     run_http_client_test(tmp)
+    run_web_socket_test(tmp)

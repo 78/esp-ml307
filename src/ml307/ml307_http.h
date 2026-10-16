@@ -61,12 +61,15 @@ private:
     size_t body_offset_ = 0;
     size_t content_length_ = 0;
     bool eof_ = false;
+    // Response data was lost (DMA overflow or offset mismatch); guarded by mutex_
+    bool aborted_ = false;
     bool instance_active_ = false;
     bool request_chunked_ = false;
     bool response_chunked_ = false;
     bool keep_alive_ = false;
 
     NetworkResult<> FetchHeaders();
+    void AbortLocked(NetworkError error);
     void ParseResponseHeaders(const std::string& headers);
     std::string ErrorCodeToString(int error_code);
 };

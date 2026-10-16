@@ -8,6 +8,9 @@
 #include <freertos/task.h>
 
 #define ESP_UDP_EVENT_RECEIVE_TASK_EXIT 1
+// lwIP can lose the wake-up of a blocked recv() when the socket is closed
+// concurrently, so the receive task re-checks connected_ at this interval.
+#define ESP_UDP_RECEIVE_POLL_MS 1000
 
 class EspUdp : public Udp {
 public:

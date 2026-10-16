@@ -1,11 +1,11 @@
 #include "esp_udp.h"
+#include "esp_resolve.h"
 
 #include <esp_log.h>
 #include <unistd.h>
 #include <cstring>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <errno.h>
 
 static const char *TAG = "EspUdp";
@@ -24,22 +24,15 @@ EspUdp::~EspUdp() {
 }
 
 NetworkResult<> EspUdp::Connect(const std::string& host, int port) {
-    // 确保先断开已有连接
-    if (connected_) {
-        Disconnect();
-    }
+    // Also releases the fd left open when the receive task stopped on its own;
+    // overwriting udp_fd_ would leak the socket.
+    Disconnect();
 
-    struct sockaddr_in server_addr;
-    bzero(&server_addr, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    // host is domain
-    struct hostent *server = gethostbyname(host.c_str());
-    if (server == NULL) {
-        ESP_LOGE(TAG, "Failed to get host by name");
-        return Fail(NetworkError::FromHErrno(h_errno));
+    auto server_addr = EspResolveIpv4(host, port);
+    if (!server_addr) {
+        ESP_LOGE(TAG, "Failed to resolve %s", host.c_str());
+        return Fail(server_addr.error());
     }
-    memcpy(&server_addr.sin_addr, server->h_addr, server->h_length);
 
     udp_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_fd_ < 0) {
@@ -47,7 +40,14 @@ NetworkResult<> EspUdp::Connect(const std::string& host, int port) {
         return Fail(NetworkError::FromErrno(errno));
     }
 
-    int ret = connect(udp_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    struct timeval receive_timeout = {
+        .tv_sec = ESP_UDP_RECEIVE_POLL_MS / 1000,
+        .tv_usec = (ESP_UDP_RECEIVE_POLL_MS % 1000) * 1000,
+    };
+    int ret = setsockopt(udp_fd_, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
+    if (ret == 0) {
+        ret = connect(udp_fd_, reinterpret_cast<const struct sockaddr*>(&*server_addr), sizeof(*server_addr));
+    }
     if (ret < 0) {
         auto err = NetworkError::FromErrno(errno);
         ESP_LOGE(TAG, "Failed to connect to %s:%d: %s", host.c_str(), port, err.ToString().c_str());
@@ -59,26 +59,40 @@ NetworkResult<> EspUdp::Connect(const std::string& host, int port) {
     connected_ = true;
 
     xEventGroupClearBits(event_group_, ESP_UDP_EVENT_RECEIVE_TASK_EXIT);
-    xTaskCreate([](void* arg) {
+    BaseType_t rc = xTaskCreate([](void* arg) {
         EspUdp* udp = (EspUdp*)arg;
         udp->ReceiveTask();
         xEventGroupSetBits(udp->event_group_, ESP_UDP_EVENT_RECEIVE_TASK_EXIT);
         vTaskDelete(NULL);
     }, "udp_receive", 3072, this, 1, &receive_task_handle_);
+    if (rc != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create receive task");
+        connected_ = false;
+        receive_task_handle_ = nullptr;
+        close(udp_fd_);
+        udp_fd_ = -1;
+        return Fail(NetworkError::FromErrno(ENOMEM));
+    }
     return {};
 }
 
 void EspUdp::Disconnect() {
     connected_ = false;
 
+    // lwIP does not support shutdown() on UDP sockets, so close() wakes the
+    // blocked recv(). With LWIP_NETCONN_FULLDUPLEX the fd number stays
+    // reserved until that recv() returns.
     if (udp_fd_ != -1) {
         close(udp_fd_);
         udp_fd_ = -1;
+    }
 
+    if (receive_task_handle_ != nullptr) {
         auto bits = xEventGroupWaitBits(event_group_, ESP_UDP_EVENT_RECEIVE_TASK_EXIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
         if (!(bits & ESP_UDP_EVENT_RECEIVE_TASK_EXIT)) {
             ESP_LOGE(TAG, "Failed to wait for receive task exit");
         }
+        receive_task_handle_ = nullptr;
     }
 }
 
@@ -100,15 +114,25 @@ void EspUdp::ReceiveTask() {
     while (connected_) {
         data.resize(1500);
         int ret = recv(udp_fd_, data.data(), data.size(), 0);
-        if (ret <= 0) {
+        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            continue;
+        }
+        if (ret < 0) {
+            if (connected_) {
+                ESP_LOGE(TAG, "UDP receive failed: errno=%d", errno);
+            }
+            // The fd stays open until Disconnect() or the next Connect()
             connected_ = false;
             break;
         }
-        
+        if (ret == 0) {
+            // Empty datagrams are valid and do not close a UDP socket
+            continue;
+        }
+
         if (message_callback_) {
             data.resize(ret);
             message_callback_(data);
         }
     }
 }
-
