@@ -1,4 +1,4 @@
-# ML307 / Quectel-E Series Cat.1 AT Modem (v3.7)
+# ML307 / Quectel-E Series Cat.1 AT Modem (v3.8.1)
 
 English | [简体中文](README_zh.md)
 
@@ -9,7 +9,9 @@ If you see `UART_FIFO_OVF`, set `CONFIG_UART_ISR_IN_IRAM=y` and keep heavy I/O s
 
 Requires **C++23** (`std::expected`) and **ESP-IDF >= 5.5.2**.
 
-Version 3.8.0 requires **uart-uhci ^0.4.1** on non-ESP32 targets, including compatibility with the GDMA API in ESP-IDF maintenance branches, and can share it with uart-eth-modem 0.7.x. Public AT APIs are unchanged. `WebSocket` adds `OnPing()`/`SendPong()` so that callers on AT modems can send the Pong outside the AT event task. The built-in HTTP/1.1 client used by the ESP and EC801E backends reports an early close immediately instead of waiting for the full timeout. UART transmission has a separate timeout based on 8N1 wire time plus 1000 ms; the command timeout still controls waiting for the modem response. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Version 3.8.1 removes C++ string streams from AT argument and ML307 HTTP response header parsing, allowing applications without other stream usage to discard iostream/locale code.
+
+Version 3.8.1 requires **uart-uhci ^0.4.1** on non-ESP32 targets, including compatibility with the GDMA API in ESP-IDF maintenance branches, and can share it with uart-eth-modem 0.7.x. Public AT APIs are unchanged. `WebSocket` adds `OnPing()`/`SendPong()` so that callers on AT modems can send the Pong outside the AT event task. The built-in HTTP/1.1 client used by the ESP and EC801E backends reports an early close immediately instead of waiting for the full timeout. UART transmission has a separate timeout based on 8N1 wire time plus 1000 ms; the command timeout still controls waiting for the modem response. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## What's New in 3.7
 

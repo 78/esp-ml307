@@ -1,8 +1,8 @@
 #include "ml307_http.h"
 #include <esp_log.h>
-#include <cstring>
-#include <sstream>
 #include <chrono>
+#include <cstring>
+#include <string_view>
 
 static const char *TAG = "Ml307Http";
 
@@ -176,14 +176,15 @@ void Ml307Http::SetKeepAlive(bool enable) {
 }
 
 void Ml307Http::ParseResponseHeaders(const std::string& headers) {
-    std::istringstream iss(headers);
-    std::string line;
-    while (std::getline(iss, line)) {
-        std::istringstream line_iss(line);
-        std::string key, value;
-        std::getline(line_iss, key, ':');
-        std::getline(line_iss, value);
-    
+    std::string_view remaining(headers);
+    while (!remaining.empty()) {
+        const auto end = remaining.find('\n');
+        const auto line = remaining.substr(0, end);
+        const auto separator = line.find(':');
+        std::string key(line.substr(0, separator));
+        std::string value(separator == std::string_view::npos ? std::string_view{}
+                                                              : line.substr(separator + 1));
+
         // 去除前后空格
         key.erase(0, key.find_first_not_of(" \t"));
         key.erase(key.find_last_not_of(" \t") + 1);
@@ -197,6 +198,10 @@ void Ml307Http::ParseResponseHeaders(const std::string& headers) {
             response_chunked_ = true;
             ESP_LOGI(TAG, "Found chunked transfer encoding");
         }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        remaining.remove_prefix(end + 1);
     }
 }
 

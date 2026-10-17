@@ -1,4 +1,4 @@
-# ML307 / Quectel-E Series Cat.1 AT Modem (v3.7)
+# ML307 / Quectel-E Series Cat.1 AT Modem (v3.8.1)
 
 [English](README.md) | 简体中文
 
@@ -9,7 +9,9 @@
 
 组件要求 **C++23**（`std::expected`）和 **ESP-IDF >= 5.5.2**。
 
-3.8.0 在非 ESP32 目标上要求 **uart-uhci ^0.4.1**，包含对 ESP-IDF 维护分支中 GDMA API 的兼容修复，可以与 uart-eth-modem 0.7.x 共用此依赖。公开 AT API 不变。`WebSocket` 新增 `OnPing()`/`SendPong()`，AT 模组上的调用方可以在 AT 事件任务之外发送 Pong。ESP 和 EC801E 后端使用的内置 HTTP/1.1 客户端在连接提前断开时会立即报错，不再等满超时。UART 发送超时按 8N1 传输时间加 1000 ms 单独计算；命令超时参数仍控制等待模组响应的时间。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+3.8.1 移除了 AT 参数和 ML307 HTTP 响应头解析中的 C++ 字符串流；应用其他代码没有使用流时，链接器可以移除相关的 iostream/locale 代码。
+
+3.8.1 在非 ESP32 目标上要求 **uart-uhci ^0.4.1**，包含对 ESP-IDF 维护分支中 GDMA API 的兼容修复，可以与 uart-eth-modem 0.7.x 共用此依赖。公开 AT API 不变。`WebSocket` 新增 `OnPing()`/`SendPong()`，AT 模组上的调用方可以在 AT 事件任务之外发送 Pong。ESP 和 EC801E 后端使用的内置 HTTP/1.1 客户端在连接提前断开时会立即报错，不再等满超时。UART 发送超时按 8N1 传输时间加 1000 ms 单独计算；命令超时参数仍控制等待模组响应的时间。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 🆕 版本 3.7 新特性
 

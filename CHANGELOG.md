@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.8.1 — 2026-10-17
+
+- Replace C++ string streams in AT argument parsing and ML307 HTTP response header parsing with direct string scans. Applications that do not use streams elsewhere can discard the associated iostream/locale code.
+- Preserve empty AT argument positions without accessing the front of an empty string.
+- Remove unused `<sstream>` and `<iomanip>` includes from modem backends.
+
 ## 3.8.0 — 2026-10-16
 
 Fixes in the built-in HTTP/1.1 client (`HttpClient`, used by the ESP and EC801E backends):

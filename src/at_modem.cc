@@ -1,11 +1,9 @@
 #include "at_modem.h"
-#include "ml307/ml307_at_modem.h"
-#include "ec801e/ec801e_at_modem.h"
-#include <esp_log.h>
 #include <esp_err.h>
-#include <sstream>
-#include <iomanip>
+#include <esp_log.h>
 #include <cstring>
+#include "ec801e/ec801e_at_modem.h"
+#include "ml307/ml307_at_modem.h"
 
 static const char* TAG = "AtModem";
 

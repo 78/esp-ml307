@@ -1,15 +1,13 @@
 #include "ml307_at_modem.h"
-#include <esp_log.h>
 #include <esp_err.h>
+#include <esp_log.h>
 #include <cassert>
-#include <sstream>
-#include <iomanip>
 #include <cstring>
-#include "ml307_tcp.h"
-#include "ml307_ssl.h"
-#include "ml307_udp.h"
-#include "ml307_mqtt.h"
 #include "ml307_http.h"
+#include "ml307_mqtt.h"
+#include "ml307_ssl.h"
+#include "ml307_tcp.h"
+#include "ml307_udp.h"
 #include "web_socket.h"
 
 #define TAG "Ml307AtModem"

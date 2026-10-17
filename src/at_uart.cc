@@ -1,13 +1,12 @@
 #include "at_uart.h"
-#include <esp_log.h>
 #include <esp_err.h>
+#include <esp_log.h>
 #include <esp_pm.h>
 #include <esp_sleep.h>
 #include <algorithm>
-#include <cstring>
-#include <cstdlib>
 #include <cstdint>
-#include <sstream>
+#include <cstdlib>
+#include <cstring>
 
 #define TAG "AtUart"
 
@@ -373,11 +372,12 @@ bool AtUart::ParseResponse() {
     if (!command.empty()) {
         // Parse "string", int, int, ... into AtArgumentValue
         std::vector<AtArgumentValue> arguments;
-        std::istringstream iss(values);
-        std::string item;
-        while (std::getline(iss, item, ',')) {
+        size_t start = 0;
+        while (start < values.size()) {
+            const auto end = values.find(',', start);
+            std::string item = values.substr(start, end == std::string::npos ? end : end - start);
             AtArgumentValue argument;
-            if (item.front() == '"') {
+            if (!item.empty() && item.front() == '"') {
                 argument.type = AtArgumentValue::Type::String;
                 argument.string_value = item.substr(1, item.size() - 2);
             } else if (item.find(".") != std::string::npos) {
@@ -392,6 +392,10 @@ bool AtUart::ParseResponse() {
                 argument.string_value = std::move(item);
             }
             arguments.push_back(argument);
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
         }
 
         HandleUrc(command, arguments);

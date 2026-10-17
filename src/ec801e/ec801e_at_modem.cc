@@ -1,14 +1,12 @@
 #include "ec801e_at_modem.h"
-#include <esp_log.h>
 #include <esp_err.h>
+#include <esp_log.h>
 #include <cassert>
-#include <sstream>
-#include <iomanip>
 #include <cstring>
+#include "ec801e_mqtt.h"
 #include "ec801e_ssl.h"
 #include "ec801e_tcp.h"
 #include "ec801e_udp.h"
-#include "ec801e_mqtt.h"
 #include "http_client.h"
 #include "web_socket.h"
 
