@@ -223,7 +223,11 @@ NetworkResult<> HttpClient::Open(const std::string& method, const std::string& u
         ESP_LOGI(TAG, "Established new connection to %s:%d protocol=%s cost=%u", host_.c_str(), port_, protocol_.c_str(), t_connected - t_connect);
     }
     
-    request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value();
+    // A caller that provides an explicit Content-Length wants to stream the
+    // body with Write(); chunked framing would corrupt that request.
+    const bool user_set_content_length = headers_.find("content-length") != headers_.end();
+    request_chunked_ = (method_ == "POST" || method_ == "PUT") && !content_.has_value() &&
+                       !user_set_content_length;
 
     std::string http_request = BuildHttpRequest();
     if (tcp_->Send(http_request) <= 0) {
