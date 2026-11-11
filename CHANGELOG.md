@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.8.2 — 2026-11-11
+
+- Honor an explicit `Content-Length` when streaming POST/PUT request bodies through `HttpClient::Write()`, so fixed-length uploads are sent without chunk framing (#64 by @romoss314).
+- Add host regression coverage for fixed-length multipart-style writes with binary data and case-insensitive header names, and preserve default chunked POST/PUT uploads.
+
 ## 3.8.1 — 2026-10-17
 
 - Replace C++ string streams in AT argument parsing and ML307 HTTP response header parsing with direct string scans. Applications that do not use streams elsewhere can discard the associated iostream/locale code.

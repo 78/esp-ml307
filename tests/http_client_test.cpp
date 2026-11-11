@@ -302,7 +302,52 @@ static void TestKeepAliveReuseRequiresSameEndpoint() {
     CHECK(network.created == 3);
 }
 
+static void TestExplicitContentLengthStreamsRawBody() {
+    for (const char* method : {"POST", "PUT"}) {
+        for (const char* header : {"Content-Length", "content-length", "CONTENT-LENGTH"}) {
+            FakeNetwork network;
+            HttpClient client(&network);
+            const std::string jpeg("\xff\xd8\0\xff\xd9", 5);
+            const std::string prefix = "multipart prefix\r\n";
+            const std::string suffix = "\r\nmultipart suffix";
+            const std::string body = prefix + jpeg + suffix;
+            client.SetHeader(header, std::to_string(body.size()));
+            CHECK(client.Open(method, "https://example.com/upload").has_value());
+
+            const std::string request = network.last->sent;
+            CHECK(request.find(std::string(header) + ": " + std::to_string(body.size()) + "\r\n") != std::string::npos);
+            CHECK(request.find("Transfer-Encoding:") == std::string::npos);
+            CHECK(request.ends_with("\r\n\r\n"));
+            for (const auto& part : {prefix, jpeg, suffix}) {
+                auto written = client.Write(part.data(), part.size());
+                CHECK(written.has_value() && *written == static_cast<int>(part.size()));
+            }
+            auto ended = client.Write("", 0);
+            CHECK(ended.has_value() && *ended == 0);
+            CHECK(network.last->sent == request + body);
+        }
+    }
+}
+
+static void TestDefaultRequestStillUsesChunkedFraming() {
+    for (const char* method : {"POST", "PUT"}) {
+        FakeNetwork network;
+        HttpClient client(&network);
+        CHECK(client.Open(method, "https://example.com/upload").has_value());
+        const std::string request = network.last->sent;
+        CHECK(request.find("Transfer-Encoding: chunked\r\n") != std::string::npos);
+        CHECK(request.find("Content-Length:") == std::string::npos);
+        for (const std::string part : {"abc", "de", ""}) {
+            auto written = client.Write(part.data(), part.size());
+            CHECK(written.has_value() && *written > 0);
+        }
+        CHECK(network.last->sent == request + "3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n");
+    }
+}
+
 int main() {
+    TestExplicitContentLengthStreamsRawBody();
+    TestDefaultRequestStillUsesChunkedFraming();
     TestCloseBeforeHeadersFailsImmediately();
     TestCompleteResponseThenCloseSucceeds();
     TestTruncatedBodyReportsDisconnect();
