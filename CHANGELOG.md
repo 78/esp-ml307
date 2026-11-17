@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.8.3 — 2026-11-18
+
+- Remove the hardcoded 4096-byte ESP MQTT task stack size so ESP-MQTT uses its configured stack size. Applications can enable `CONFIG_MQTT_USE_CUSTOM_CONFIG` and set `CONFIG_MQTT_TASK_STACK_SIZE` to tune the stack for their TLS workload (#65).
+
 ## 3.8.2 — 2026-11-11
 
 - Honor an explicit `Content-Length` when streaming POST/PUT request bodies through `HttpClient::Write()`, so fixed-length uploads are sent without chunk framing (#64 by @romoss314).
